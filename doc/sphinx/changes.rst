@@ -271,6 +271,13 @@ Tactics
   fixes `#11504 <https://github.com/coq/coq/issues/11504>`_
   and `#14090 <https://github.com/coq/coq/issues/14090>`_,
   by Lasse Blaauwbroek and Hugo Herbelin).
+- **Fixed:**
+  Correct convertibility of multiple terms selected by patterns in
+  tactics such as :tacn:`set` when these terms have subterms in
+  `SProp`
+  (`#14610 <https://github.com/coq/coq/pull/14610>`_,
+  fixes `#14609 <https://github.com/coq/coq/issues/14609>`_,
+  by Hugo Herbelin).
 
 Tactic language
 ^^^^^^^^^^^^^^^
@@ -429,6 +436,13 @@ Commands and options
   (`#14382 <https://github.com/coq/coq/pull/14382>`_,
   fixes `#13589 <https://github.com/coq/coq/issues/13589>`_,
   by Pierre-Marie Pédrot).
+- **Fixed:**
+  Incorrect de Bruijn index handling in vernac class declaration,
+  preventing users from marking existing instances of existing classes
+  which are primitive projections
+  (`#14664 <https://github.com/coq/coq/pull/14664>`_,
+  fixes `#14652 <https://github.com/coq/coq/issues/14652>`_,
+  by Ali Caglayan and Hugo Herbelin).
 
 Command-line tools
 ^^^^^^^^^^^^^^^^^^
@@ -662,11 +676,18 @@ Infrastructure and dependencies
   by Emilio Jesus Gallego Arias, review by Vincent Laporte, Guillaume
   Melquiond, Enrico Tassi, and Théo Zimmerman).
 - **Changed:**
-  Coq's OCaml parts and tools [coq-core] are now built using Dune.
+  Coq's OCaml parts and tools [``coq-core``] are now built using Dune.
   The main user-facing change is that Dune >= 2.5 is now required to
-  build Coq, most recent Dune is usually recommended.
+  build Coq. This was a large and complex change. If you are packager
+  you may find some minor differences if you were using a lot of custom
+  optimizations. Note that, in particular, the configure option
+  ``-datadir`` is not customizable anymore, and ``-bindir`` has been
+  removed in favor of ``$prefix/bin``. Moreover, the install procedure
+  will ignore ``-docdir`` and ``-etcdir``, unless you patch the makefile
+  and use Dune >= 2.9.
+  We usually recommended using a recent Dune version, if possible.
   For developers and plugin authors, see the entry in
-  `dev/doc/changes.md`.
+  `dev/doc/changes.md`. For packagers and users, see `dev/doc/INSTALL.make.md`.
   (`#13617 <https://github.com/coq/coq/pull/13617>`_,
   by Emilio Jesús Gallego Arias, Rudi Grinberg, and Théo Zimmerman;
   review and testing by Gaëtan Gilbert, Guillaume Melquiond, and
@@ -865,8 +886,8 @@ Specification language, type inference
   If the value is missing, the default is :n:`yes`.  The old syntax is still
   supported, but produces the ``deprecated-attribute-syntax`` warning.
 
-  Deprecated attributes are :attr:`universes(monomorphic)`,
-  :attr:`universes(notemplate)` and :attr:`universes(noncumulative)`, which are
+  Deprecated attributes are ``universes(monomorphic)``,
+  ``universes(notemplate)`` and ``universes(noncumulative)``, which are
   respectively replaced by :attr:`universes(polymorphic=no) <universes(polymorphic)>`,
   :attr:`universes(template=no) <universes(template)>`
   and :attr:`universes(cumulative=no) <universes(cumulative)>`.
@@ -1232,7 +1253,7 @@ Commands and options
   (`#13384 <https://github.com/coq/coq/pull/13384>`_,
   by Pierre-Marie Pédrot).
 - **Deprecated:**
-  :cmd:`Grab Existential Variables` and :cmd:`Existential` commands
+  ``Grab Existential Variables`` and ``Existential`` commands
   (`#12516 <https://github.com/coq/coq/pull/12516>`_,
   by Maxime Dénès).
 - **Added:**

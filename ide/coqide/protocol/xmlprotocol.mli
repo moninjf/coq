@@ -8,7 +8,7 @@
 (*         *     (see LICENSE file for the text of the license)         *)
 (************************************************************************)
 
-(** * Applicative part of the interface of CoqIde calls to Coq *)
+(** * Applicative part of the interface of CoqIDE calls to Coq *)
 
 open Interface
 open Xml_datatype
@@ -49,7 +49,7 @@ val protocol_version : string
 (** By default, we still output messages in Richpp so we are
     compatible with 8.6, however, 8.7 aware clients will want to
     set this to Ppcmds *)
-type msg_format = Richpp of int | Ppcmds
+type msg_format = Richpp of { width : int; depth : int } | Ppcmds
 
 (** * XML data marshalling *)
 

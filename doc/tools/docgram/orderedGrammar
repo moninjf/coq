@@ -55,8 +55,8 @@ term_ltac: [
 ]
 
 term_projection: [
-| term0 ".(" qualid LIST0 arg ")"
-| term0 ".(" "@" qualid LIST0 ( term1 ) ")"
+| term0 ".(" qualid OPT univ_annot LIST0 arg ")"
+| term0 ".(" "@" qualid OPT univ_annot LIST0 ( term1 ) ")"
 ]
 
 term_scope: [
@@ -876,7 +876,6 @@ command: [
 | "Print" "Grammar" ident
 | "Print" "Custom" "Grammar" ident
 | "Print" "LoadPath" OPT dirpath
-| "Print" "Modules"
 | "Print" "Libraries"
 | "Print" "ML" "Path"
 | "Print" "ML" "Modules"
@@ -916,8 +915,6 @@ command: [
 | "Add" setting_name LIST1 [ qualid | string ]
 | "Test" setting_name OPT ( "for" LIST1 [ qualid | string ] )
 | "Remove" setting_name LIST1 [ qualid | string ]
-| "Write" "State" [ ident | string ]
-| "Restore" "State" [ ident | string ]
 | "Reset" "Initial"
 | "Reset" ident
 | "Back" OPT natural
@@ -949,7 +946,6 @@ command: [
 | "Proof" "Mode" string
 | "Proof" term
 | "Abort" OPT [ "All" | ident ]
-| "Existential" natural OPT ( ":" type ) ":=" term
 | "Admitted"
 | "Qed"
 | "Save" ident
@@ -991,7 +987,6 @@ command: [
 | "Declare" "Morphism" one_term ":" ident
 | "Add" "Morphism" one_term "with" "signature" term "as" ident
 | "Add" "Parametric" "Morphism" LIST0 binder ":" one_term "with" "signature" term "as" ident
-| "Grab" "Existential" "Variables"
 | "Unshelve"
 | "Declare" "Equivalent" "Keys" one_term one_term
 | "Print" "Equivalent" "Keys"
@@ -1033,7 +1028,6 @@ command: [
 | "Declare" "Left" "Step" one_term
 | "Declare" "Right" "Step" one_term
 | "Number" "Notation" qualid qualid qualid OPT ( "(" LIST1 number_modifier SEP "," ")" ) ":" scope_name
-| "Numeral" "Notation" qualid qualid qualid ":" scope_name OPT deprecated_number_modifier
 | "String" "Notation" qualid qualid qualid OPT ( "(" number_string_via ")" ) ":" scope_name
 | "SubClass" ident_decl def_body
 | thm_token ident_decl LIST0 binder ":" type LIST0 [ "with" ident_decl LIST0 binder ":" type ]
@@ -1128,6 +1122,7 @@ command: [
 | "Redirect" string sentence
 | "Timeout" natural sentence
 | "Fail" sentence
+| "Succeed" sentence
 | "Drop"
 | "Quit"
 | "BackTo" natural
@@ -1625,6 +1620,7 @@ simple_tactic: [
 | "einjection" OPT induction_arg OPT ( "as" LIST0 simple_intropattern )
 | "simple" "injection" OPT induction_arg
 | "replace" OPT [ "->" | "<-" ] one_term OPT occurrences
+| "typeclasses" "eauto" OPT [ "bfs" | "dfs" ] OPT nat_or_var OPT ( "with" LIST1 ident )
 | "setoid_replace" one_term "with" one_term OPT ( "using" "relation" one_term ) OPT ( "in" ident ) OPT ( "at" LIST1 int_or_var ) OPT ( "by" ltac_expr3 )
 | OPT ( [ natural | "[" ident "]" ] ":" ) "{"
 | bullet
@@ -1735,7 +1731,6 @@ simple_tactic: [
 | "info_auto" OPT nat_or_var OPT auto_using OPT hintbases
 | "debug" "auto" OPT nat_or_var OPT auto_using OPT hintbases
 | "eauto" OPT nat_or_var OPT auto_using OPT hintbases
-| "new" "auto" OPT nat_or_var OPT auto_using OPT hintbases
 | "debug" "eauto" OPT nat_or_var OPT auto_using OPT hintbases
 | "info_eauto" OPT nat_or_var OPT auto_using OPT hintbases
 | "dfs" "eauto" OPT nat_or_var OPT auto_using OPT hintbases
@@ -1743,7 +1738,6 @@ simple_tactic: [
 | "autounfold" OPT hintbases OPT simple_occurrences
 | "autounfold_one" OPT hintbases OPT ( "in" ident )
 | "unify" one_term one_term OPT ( "with" ident )
-| "typeclasses" "eauto" OPT "bfs" OPT nat_or_var OPT ( "with" LIST1 ident )
 | "head_of_constr" ident one_term
 | "not_evar" one_term
 | "is_ground" one_term
@@ -1826,6 +1820,7 @@ simple_tactic: [
 | "btauto"
 | "rtauto"
 | "congruence" OPT natural OPT ( "with" LIST1 one_term )
+| "simple" "congruence" OPT natural OPT ( "with" LIST1 one_term )
 | "f_equal"
 | "firstorder" OPT ltac_expr OPT ( "using" LIST1 qualid SEP "," ) OPT ( "with" LIST1 ident )
 | "gintuition" OPT ltac_expr
@@ -1959,8 +1954,8 @@ induction_clause: [
 ]
 
 induction_arg: [
-| natural
 | one_term_with_bindings
+| natural
 ]
 
 induction_principle: [

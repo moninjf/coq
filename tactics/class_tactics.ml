@@ -158,12 +158,12 @@ let unify_resolve ~with_evars flags h diff = match diff with
 | None ->
   Hints.hint_res_pf ~with_evars ~with_classes:false ~flags h
 | Some (diff, ty) ->
-  let () = assert (Option.is_empty h.hint_uctx) in
+  let () = assert (Option.is_empty (fst @@ hint_as_term @@ h)) in
   Proofview.Goal.enter begin fun gl ->
   let env = Proofview.Goal.env gl in
   let sigma = Tacmach.New.project gl in
   let sigma, c = Hints.fresh_hint env sigma h in
-  let clenv = mk_clenv_from_env env sigma (Some diff) (c, ty) in
+  let clenv = mk_clenv_from_n env sigma diff (c, ty) in
   Clenv.res_pf ~with_evars ~with_classes:false ~flags clenv
   end
 
@@ -203,10 +203,10 @@ let unify_resolve_refine flags h diff =
 let with_prods nprods h f =
   if get_typeclasses_limit_intros () then
     Proofview.Goal.enter begin fun gl ->
-      if Option.has_some h.hint_uctx || Int.equal nprods 0 then f None
+      if Option.has_some (fst @@ hint_as_term h) || Int.equal nprods 0 then f None
       else
         let sigma = Tacmach.New.project gl in
-        let ty = Retyping.get_type_of (Proofview.Goal.env gl) sigma h.hint_term in
+        let ty = Retyping.get_type_of (Proofview.Goal.env gl) sigma (snd @@ hint_as_term h) in
         let diff = nb_prod sigma ty - nprods in
         if (>=) diff 0 then f (Some (diff, ty))
         else Tacticals.New.tclZEROMSG (str"Not enough premisses")
@@ -260,10 +260,7 @@ let hintmap_of env sigma hdc secvars concl =
   match hdc with
   | None -> fun db -> ModeMatch (Hint_db.map_none ~secvars db)
   | Some hdc ->
-     fun db ->
-       if Hint_db.use_dn db then (* Using dnet *)
-         Hint_db.map_eauto env sigma ~secvars hdc concl db
-      else Hint_db.map_existential sigma ~secvars hdc concl db
+    fun db -> Hint_db.map_eauto env sigma ~secvars hdc concl db
 
 (** Hack to properly solve dependent evars that are typeclasses *)
 let rec e_trivial_fail_db only_classes db_list local_db secvars =
@@ -1192,7 +1189,9 @@ let autoapply c i =
   let flags = auto_unif_flags
     (Hints.Hint_db.transparent_state hintdb) in
   let cty = Tacmach.New.pf_get_type_of gl c in
-  let ce = mk_clenv_from gl (c,cty) in
+  let env = Proofview.Goal.env gl in
+  let sigma = Proofview.Goal.sigma gl in
+  let ce = mk_clenv_from env sigma (c,cty) in
   Clenv.res_pf ~with_evars:true ~with_classes:false ~flags ce <*>
       Proofview.tclEVARMAP >>= (fun sigma ->
       let sigma = Typeclasses.make_unresolvables

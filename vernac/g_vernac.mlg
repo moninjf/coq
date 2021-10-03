@@ -95,6 +95,8 @@ GRAMMAR EXTEND Gram
         { add_control_flag ~loc ~flag:(ControlTimeout n) c }
       | IDENT "Fail"; c = vernac_control ->
         { add_control_flag ~loc ~flag:ControlFail c }
+      | IDENT "Succeed"; c = vernac_control ->
+        { add_control_flag ~loc ~flag:ControlSucceed c }
       | v = decorated_vernac ->
         { let (attrs, expr) = v in CAst.make ~loc { control = []; attrs; expr = expr } } ]
     ]
@@ -983,9 +985,7 @@ GRAMMAR EXTEND Gram
           (* Should also be in "syntax" section *)
           { PrintCustomGrammar ent }
       | IDENT "LoadPath"; dir = OPT dirpath -> { PrintLoadPath dir }
-      | IDENT "Modules" ->
-          { user_err ~loc Pp.(str "Print Modules is obsolete; use Print Libraries instead") }
-      | IDENT "Libraries" -> { PrintModules }
+      | IDENT "Libraries" -> { PrintLibraries }
 
       | IDENT "ML"; IDENT "Path" -> { PrintMLLoadPath }
       | IDENT "ML"; IDENT "Modules" -> { PrintMLModules }
@@ -1123,14 +1123,8 @@ GRAMMAR EXTEND Gram
 
   command: TOP
     [ [
-(* State management *)
-        IDENT "Write"; IDENT "State"; s = IDENT -> { VernacWriteState s }
-      | IDENT "Write"; IDENT "State"; s = ne_string -> { VernacWriteState s }
-      | IDENT "Restore"; IDENT "State"; s = IDENT -> { VernacRestoreState s }
-      | IDENT "Restore"; IDENT "State"; s = ne_string -> { VernacRestoreState s }
-
 (* Resetting *)
-      | IDENT "Reset"; IDENT "Initial" -> { VernacResetInitial }
+        IDENT "Reset"; IDENT "Initial" -> { VernacResetInitial }
       | IDENT "Reset"; id = identref -> { VernacResetName id }
       | IDENT "Back" -> { VernacBack 1 }
       | IDENT "Back"; n = natural -> { VernacBack n }
@@ -1179,7 +1173,7 @@ GRAMMAR EXTEND Gram
      | IDENT "Infix"; op = ne_lstring; ":="; p = constr;
          modl = syntax_modifiers;
          sc = OPT [ ":"; sc = IDENT -> { sc } ] ->
-         { VernacInfix ((op,modl),p,sc) }
+         { VernacNotation (true,p,(op,modl),sc) }
      | IDENT "Notation"; id = identref; idl = LIST0 ident;
          ":="; c = constr; modl = syntax_modifiers ->
            { VernacSyntacticDefinition (id,(idl,c), modl) }
@@ -1187,19 +1181,14 @@ GRAMMAR EXTEND Gram
          c = constr;
          modl = syntax_modifiers;
          sc = OPT [ ":"; sc = IDENT -> { sc } ] ->
-           { VernacNotation (c,(s,modl),sc) }
+           { VernacNotation (false,c,(s,modl),sc) }
      | IDENT "Format"; IDENT "Notation"; n = STRING; s = STRING; fmt = STRING ->
            { VernacNotationAddFormat (n,s,fmt) }
 
-     | IDENT "Reserved"; IDENT "Infix"; s = ne_lstring;
-         l = syntax_modifiers ->
-           { let s = CAst.map (fun s -> "x '"^s^"' y") s in
-           VernacReservedNotation (true,(s,l)) }
-
-     | IDENT "Reserved"; IDENT "Notation";
-         s = ne_lstring;
-         l = syntax_modifiers
-         -> { VernacReservedNotation (false, (s,l)) }
+     | IDENT "Reserved"; IDENT "Infix"; s = ne_lstring; l = syntax_modifiers ->
+           { VernacReservedNotation (true,(s,l)) }
+     | IDENT "Reserved"; IDENT "Notation"; s = ne_lstring; l = syntax_modifiers ->
+           { VernacReservedNotation (false,(s,l)) }
 
      (* "Print" "Grammar" and "Declare" "Scope" should be here but are in "command" entry in order
         to factorize with other "Print"-based or "Declare"-based vernac entries *)

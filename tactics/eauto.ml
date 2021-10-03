@@ -77,7 +77,7 @@ let hintmap_of env sigma secvars concl =
   | Some hdc ->
      if occur_existential sigma concl then
        (fun db ->
-          match Hint_db.map_existential sigma ~secvars hdc concl db with
+          match Hint_db.map_eauto env sigma ~secvars hdc concl db with
           | ModeMatch l -> l
           | ModeMismatch -> [])
      else (fun db -> Hint_db.map_auto env sigma ~secvars hdc concl db)
@@ -392,7 +392,7 @@ let autounfolds ids csts gl cls =
   let flags =
     List.fold_left (fun flags cst -> CClosure.RedFlags.(red_add flags (fCONST cst)))
       (List.fold_left (fun flags id -> CClosure.RedFlags.(red_add flags (fVAR id)))
-         CClosure.betaiotazeta ids) csts
+         (CClosure.RedFlags.red_add_transparent CClosure.all TransparentState.empty) ids) csts
   in reduct_option ~check:false (Reductionops.clos_norm_flags flags, DEFAULTcast) cls
 
 let cons a l = a :: l

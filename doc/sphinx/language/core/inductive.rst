@@ -33,8 +33,11 @@ Inductive types
 
    This command supports the :attr:`universes(polymorphic)`,
    :attr:`universes(template)`, :attr:`universes(cumulative)`,
-   :attr:`bypass_check(positivity)`, :attr:`bypass_check(universes)`, and
+   :attr:`bypass_check(positivity)`, :attr:`bypass_check(universes)` and
    :attr:`private(matching)` attributes.
+
+   When record syntax is used, this command also supports the
+   :attr:`projections(primitive)` :term:`attribute`.
 
    Mutually inductive types can be defined by including multiple :n:`@inductive_definition`\s.
    The :n:`@ident`\s are simultaneously added to the global environment before
@@ -1102,12 +1105,6 @@ Conversion is preserved as any (partial) instance :math:`I_j~q_1 … q_r` or
    When ``universes(template=no)`` is used, it will prevent an
    inductive type to be template polymorphic, even if the :flag:`Auto
    Template Polymorphism` flag is on.
-
-.. attr:: universes(notemplate)
-
-   .. deprecated:: 8.13
-
-      Use :attr:`universes(template=no) <universes(template)>` instead.
 
 In practice, the rule **Ind-Family** is used by Coq only when all the
 inductive types of the inductive definition are declared with an arity

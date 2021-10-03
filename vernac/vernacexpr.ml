@@ -32,7 +32,7 @@ type printable =
   | PrintGrammar of string
   | PrintCustomGrammar of string
   | PrintLoadPath of DirPath.t option
-  | PrintModules
+  | PrintLibraries
   | PrintModule of qualid
   | PrintModuleType of qualid
   | PrintNamespace of DirPath.t
@@ -108,6 +108,8 @@ type coercion_flag  = bool (* true = AddCoercion    false = NoCoercion     *)
 type instance_flag  = BackInstance | NoInstance
 
 type export_flag    = bool (* true = Export;        false = Import         *)
+
+type infix_flag     = bool (* true = Infix;         false = Notation       *)
 
 type one_import_filter_name = qualid * bool (* import inductive components *)
 type import_filter_expr =
@@ -313,15 +315,13 @@ type nonrec vernac_expr =
 
   | VernacLoad of verbose_flag * string
   (* Syntax *)
-  | VernacReservedNotation of bool * (lstring * syntax_modifier CAst.t list)
+  | VernacReservedNotation of infix_flag * (lstring * syntax_modifier CAst.t list)
   | VernacOpenCloseScope of bool * scope_name
   | VernacDeclareScope of scope_name
   | VernacDelimiters of scope_name * string option
   | VernacBindScope of scope_name * class_rawexpr list
-  | VernacInfix of (lstring * syntax_modifier CAst.t list) *
-      constr_expr * scope_name option
   | VernacNotation of
-      constr_expr * (lstring * syntax_modifier CAst.t list) *
+      infix_flag * constr_expr * (lstring * syntax_modifier CAst.t list) *
       scope_name option
   | VernacNotationAddFormat of string * string * string
   | VernacDeclareCustomEntry of string
@@ -383,10 +383,6 @@ type nonrec vernac_expr =
       module_binder list * module_ast_inl list * module_ast_inl list
   | VernacInclude of module_ast_inl list
 
-  (* Solving *)
-
-  | VernacSolveExistential of int * constr_expr
-
   (* Auxiliary file and library management *)
   | VernacAddLoadPath of { implicit : bool
                          ; physical_path : CUnix.physical_path
@@ -397,10 +393,6 @@ type nonrec vernac_expr =
   | VernacAddMLPath of string
   | VernacDeclareMLModule of string list
   | VernacChdir of string option
-
-  (* State management *)
-  | VernacWriteState of string
-  | VernacRestoreState of string
 
   (* Resetting *)
   | VernacResetName of lident
@@ -465,6 +457,7 @@ type control_flag =
   | ControlRedirect of string
   | ControlTimeout of int
   | ControlFail
+  | ControlSucceed
 
 type vernac_control_r =
   { control : control_flag list

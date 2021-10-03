@@ -56,21 +56,9 @@ let inductive_paramdecls (mib,u) =
   Vars.subst_instance_context u mib.mind_params_ctxt
 
 let instantiate_inductive_constraints mib u =
-  Univ.AUContext.instantiate u (Declareops.inductive_polymorphic_context mib)
+  Univ.AbstractContext.instantiate u (Declareops.inductive_polymorphic_context mib)
 
 (************************************************************************)
-
-(* Build the substitution that replaces Rels by the appropriate *)
-(* inductives *)
-let ind_subst mind mib u =
-  let ntypes = mib.mind_ntypes in
-  let make_Ik k = mkIndU ((mind,ntypes-k-1),u) in
-  List.init ntypes make_Ik
-
-(* Instantiate inductives in constructor type *)
-let constructor_instantiate mind u mib c =
-  let s = ind_subst mind mib u in
-    substl s (subst_instance_constr u c)
 
 let instantiate_params t u args sign =
   let fail () =
@@ -94,8 +82,8 @@ let full_inductive_instantiate mib u params sign =
   let t = Term.mkArity (Vars.subst_instance_context u sign,dummy) in
     fst (Term.destArity (instantiate_params t u params mib.mind_params_ctxt))
 
-let full_constructor_instantiate ((mind,_),u,(mib,_),params) t =
-  let inst_ind = constructor_instantiate mind u mib t in
+let full_constructor_instantiate (_,u,(mib,_),params) t =
+  let inst_ind = subst_instance_constr u t in
    instantiate_params inst_ind u params mib.mind_params_ctxt
 
 (************************************************************************)
@@ -131,15 +119,15 @@ Remark: Set (predicative) is encoded as Type(0)
 (* to [x]. *)
 let cons_subst u su subst =
   try
-    Univ.LMap.add u (Univ.sup (Univ.LMap.find u subst) su) subst
-  with Not_found -> Univ.LMap.add u su subst
+    Univ.Level.Map.add u (Univ.sup (Univ.Level.Map.find u subst) su) subst
+  with Not_found -> Univ.Level.Map.add u su subst
 
 (* remember_subst updates the mapping [u |-> x] by [u |-> sup x u] *)
 (* if it is presents and returns the substitution unchanged if not.*)
 let remember_subst u subst =
   try
     let su = Universe.make u in
-    Univ.LMap.add u (Univ.sup (Univ.LMap.find u subst) su) subst
+    Univ.Level.Map.add u (Univ.sup (Univ.Level.Map.find u subst) su) subst
   with Not_found -> subst
 
 type param_univs = (unit -> Universe.t) list
@@ -180,7 +168,7 @@ let make_subst =
     | [], _, _ ->
         assert false
   in
-  make Univ.LMap.empty
+  make Univ.Level.Map.empty
 
 exception SingletonInductiveBecomesProp of Id.t
 
@@ -205,8 +193,8 @@ let relevance_of_inductive env ind =
 
 let check_instance mib u =
   if not (match mib.mind_universes with
-      | Monomorphic _ -> Instance.is_empty u
-      | Polymorphic uctx -> Instance.length u = AUContext.size uctx)
+      | Monomorphic -> Instance.is_empty u
+      | Polymorphic uctx -> Instance.length u = AbstractContext.size uctx)
   then CErrors.anomaly Pp.(str "bad instance length on mutind.")
 
 let type_of_inductive_gen ?(polyprop=true) ((mib,mip),u) paramtyps =
@@ -261,32 +249,35 @@ let max_inductive_sort =
 
 let type_of_constructor (cstr, u) (mib,mip) =
   check_instance mib u;
-  let ind = inductive_of_constructor cstr in
-  let specif = mip.mind_user_lc in
   let i = index_of_constructor cstr in
   let nconstr = Array.length mip.mind_consnames in
   if i > nconstr then user_err Pp.(str "Not enough constructors in the type.");
-  constructor_instantiate (fst ind) u mib specif.(i-1)
+  subst_instance_constr u mip.mind_user_lc.(i-1)
 
 let constrained_type_of_constructor (_cstr,u as cstru) (mib,_mip as ind) =
   let ty = type_of_constructor cstru ind in
   let cst = instantiate_inductive_constraints mib u in
     (ty, cst)
 
-let arities_of_specif (kn,u) (mib,mip) =
-  let specif = mip.mind_nf_lc in
+let arities_of_constructors (_,u) (_,mip) =
   let map (ctx, c) =
     let cty = Term.it_mkProd_or_LetIn c ctx in
-    constructor_instantiate kn u mib cty
+    subst_instance_constr u cty
   in
-  Array.map map specif
+  Array.map map mip.mind_nf_lc
 
-let arities_of_constructors ind specif =
-  arities_of_specif (fst (fst ind), snd ind) specif
+let type_of_constructors (_,u) (_,mip) =
+  Array.map (subst_instance_constr u) mip.mind_user_lc
 
-let type_of_constructors (ind,u) (mib,mip) =
-  let specif = mip.mind_user_lc in
-    Array.map (constructor_instantiate (fst ind) u mib) specif
+let abstract_constructor_type_relatively_to_inductive_types_context ntyps mind t =
+  let rec replace_ind k c =
+    let hd, args = decompose_appvect c in
+    match kind hd with
+    | Ind ((mind',i),_) when MutInd.CanOrd.equal mind mind' ->
+       mkApp (mkRel (ntyps+k-i), Array.map (replace_ind k) args)
+    | _ -> map_with_binders succ replace_ind k c
+  in
+  replace_ind 0 t
 
 (************************************************************************)
 
@@ -319,7 +310,7 @@ let build_dependent_inductive ind (_,mip) params =
   Term.applist
     (mkIndU ind,
        List.map (lift mip.mind_nrealdecls) params
-       @ Context.Rel.to_extended_list mkRel 0 realargs)
+       @ Context.Rel.instance_list mkRel 0 realargs)
 
 (* This exception is local *)
 exception LocalArity of (Sorts.family * Sorts.family * Sorts.family * arity_error) option
@@ -400,13 +391,13 @@ let expand_case_specif mib (ci, u, params, p, iv, c, br) =
   (* Γ, indices, self : I@{u} params indices ⊢ p : Type *)
   let mip = mib.mind_packets.(snd ci.ci_ind) in
   let paramdecl = Vars.subst_instance_context u mib.mind_params_ctxt in
-  let paramsubst = Vars.subst_of_rel_context_instance paramdecl (Array.to_list params) in
+  let paramsubst = Vars.subst_of_rel_context_instance paramdecl params in
   (* Expand the return clause *)
   let ep =
     let (nas, p) = p in
     let realdecls, _ = List.chop mip.mind_nrealdecls mip.mind_arity_ctxt in
     let self =
-      let args = Context.Rel.to_extended_vect mkRel 0 mip.mind_arity_ctxt in
+      let args = Context.Rel.instance mkRel 0 mip.mind_arity_ctxt in
       let inst = Instance.of_array (Array.init (Instance.length u) Level.var) in
       mkApp (mkIndU (ci.ci_ind, inst), args)
     in
@@ -415,11 +406,10 @@ let expand_case_specif mib (ci, u, params, p, iv, c, br) =
     Term.it_mkLambda_or_LetIn p realdecls
   in
   (* Expand the branches *)
-  let subst = paramsubst @ ind_subst (fst ci.ci_ind) mib u in
   let ebr =
     let build_one_branch i (nas, br) (ctx, _) =
       let ctx, _ = List.chop mip.mind_consnrealdecls.(i) ctx in
-      let ctx = instantiate_context u subst nas ctx in
+      let ctx = instantiate_context u paramsubst nas ctx in
       Term.it_mkLambda_or_LetIn br ctx
     in
     Array.map2_i build_one_branch br mip.mind_nf_lc
@@ -472,7 +462,7 @@ let build_branches_type (ind,u) (_,mip as specif) params p =
     let (lparams,vargs) = List.chop (inductive_params specif) allargs in
     let cargs =
       let cstr = ith_constructor_of_inductive ind (i+1) in
-      let dep_cstr = Term.applist (mkConstructU (cstr,u),lparams@(Context.Rel.to_extended_list mkRel 0 cstrsign)) in
+      let dep_cstr = Term.applist (mkConstructU (cstr,u),lparams@(Context.Rel.instance_list mkRel 0 cstrsign)) in
       vargs @ [dep_cstr] in
     let base = Term.lambda_appvect_assum (mip.mind_nrealdecls+1) (lift nargs p) (Array.of_list cargs) in
     Term.it_mkProd_or_LetIn base cstrsign in
@@ -696,10 +686,10 @@ let ienv_push_var (env, lra) (x,a,ra) =
 let ienv_push_inductive (env, ra_env) ((mind,u),lpar) =
   let mib = Environ.lookup_mind mind env in
   let ntypes = mib.mind_ntypes in
-  let push_ind specif env =
-    let r = specif.mind_relevance in
+  let push_ind mip env =
+    let r = mip.mind_relevance in
     let anon = Context.make_annot Anonymous r in
-    let decl = LocalAssum (anon, hnf_prod_applist env (type_of_inductive ((mib,specif),u)) lpar) in
+    let decl = LocalAssum (anon, hnf_prod_applist env (type_of_inductive ((mib,mip),u)) lpar) in
     push_rel decl env
   in
   let env = Array.fold_right push_ind mib.mind_packets env in
@@ -717,25 +707,29 @@ let rec ienv_decompose_prod (env,_ as ienv) n c =
      ienv_decompose_prod ienv' (n-1) b
      | _ -> assert false
 
-let dummy_univ = Level.(make (UGlobal.make (DirPath.make [Id.of_string "implicit"]) "" 0))
-let dummy_implicit_sort = mkType (Universe.make dummy_univ)
-let lambda_implicit_lift n a =
-  let anon = Context.make_annot Anonymous Sorts.Relevant in
-  let lambda_implicit a = mkLambda (anon, dummy_implicit_sort, a) in
-  iterate lambda_implicit n (lift n a)
-
 (* This removes global parameters of the inductive types in lc (for
    nested inductive types only ) *)
-let abstract_mind_lc ntyps npars lc =
+let dummy_univ = Level.(make (UGlobal.make (DirPath.make [Id.of_string "implicit"]) "" 0))
+let dummy_implicit_sort = mkType (Universe.make dummy_univ)
+let lambda_implicit n a =
+  let anon = Context.make_annot Anonymous Sorts.Relevant in
+  let lambda_implicit a = mkLambda (anon, dummy_implicit_sort, a) in
+  iterate lambda_implicit n a
+
+let abstract_mind_lc ntyps npars mind lc =
   let lc = Array.map (fun (ctx, c) -> Term.it_mkProd_or_LetIn c ctx) lc in
-  if Int.equal npars 0 then
-    lc
-  else
-    let make_abs =
-      List.init ntyps
-        (function i -> lambda_implicit_lift npars (mkRel (i+1)))
-    in
-    Array.map (substl make_abs) lc
+  let rec replace_ind k c =
+    let hd, args = decompose_app c in
+    match kind hd with
+    | Ind ((mind',i),_) when MutInd.CanOrd.equal mind mind' ->
+      let rec drop_params n = function
+        | _ :: args when n > 0 -> drop_params (n-1) args
+        | args -> lambda_implicit n (Term.applist (mkRel (ntyps+n+k-i), List.Smart.map (replace_ind (n+k)) args))
+      in
+      drop_params npars args
+    | _ -> map_with_binders succ replace_ind k c
+  in
+  Array.map (replace_ind 0) lc
 
 let is_primitive_positive_container env c =
   match env.retroknowledge.Retroknowledge.retro_array with
@@ -796,9 +790,9 @@ let get_recargs_approx env tree ind args =
       if Int.equal auxntyp 1 then [|dest_subterms tree|]
       else Array.map (fun mip -> dest_subterms mip.mind_recargs) mib.mind_packets
     in
-    let mk_irecargs j specif =
+    let mk_irecargs j mip =
       (* The nested inductive type with parameters removed *)
-      let auxlcvect = abstract_mind_lc auxntyp auxnpar specif.mind_nf_lc in
+      let auxlcvect = abstract_mind_lc auxntyp auxnpar mind mip.mind_nf_lc in
       let paths = Array.mapi
         (fun k c ->
          let c' = hnf_prod_applist env' c lpar' in

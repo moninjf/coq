@@ -316,9 +316,12 @@ term_let: [
 | MOVETO destructuring_let "let" "'" pattern200 "in" pattern200 ":=" term200 case_type "in" term200
 ]
 
+qualid_annotated: [
+| global univ_annot
+]
+
 atomic_constr: [
-| MOVETO qualid_annotated global univ_annot
-| MOVETO primitive_notations NUMBER
+| qualid_annotated
 | MOVETO primitive_notations string
 | MOVETO term_evar "_"
 | REPLACE "?" "[" identref "]"
@@ -397,20 +400,23 @@ term9: [
 ]
 
 term1: [
-| REPLACE term0 ".(" global LIST0 arg ")"
-| WITH    term0 ".(" global LIST0 arg ")" (* huh? *)
+| REPLACE term0 ".(" global univ_annot LIST0 arg ")"
+| WITH    term0 ".(" global univ_annot LIST0 arg ")" (* huh? *)
 | REPLACE term0 "%" IDENT
 | WITH term0 "%" scope_key
 | MOVETO term_scope term0 "%" scope_key
-| MOVETO term_projection term0 ".(" global LIST0 arg ")"
-| MOVETO term_projection term0 ".(" "@" global LIST0 ( term9 ) ")"
+| MOVETO term_projection term0 ".(" global univ_annot LIST0 arg ")"
+| MOVETO term_projection term0 ".(" "@" global univ_annot LIST0 ( term9 ) ")"
 ]
 
 term0: [
+| DELETE ident univ_annot
+| DELETE ident Prim.fields univ_annot
 (* @Zimmi48: This rule is a hack, according to Hugo, and should not be shown in the manual. *)
 | DELETE "{" binder_constr "}"
 | REPLACE "{|" record_declaration bar_cbrace
 | WITH "{|" LIST0 field_def SEP ";" OPT ";" bar_cbrace
+| MOVETO primitive_notations NUMBER
 | MOVETO term_record "{|" LIST0 field_def SEP ";" OPT ";" bar_cbrace
 | MOVETO term_generalizing "`{" term200 "}"
 | MOVETO term_generalizing "`(" term200 ")"
@@ -1113,11 +1119,12 @@ simple_tactic: [
 | REPLACE "subst" LIST1 hyp
 | WITH "subst" LIST0 hyp
 | DELETE "subst"
-| DELETE "congruence"
-| DELETE "congruence" natural
-| DELETE "congruence" "with" LIST1 constr
-| REPLACE "congruence" natural "with" LIST1 constr
+| DELETE "congruence" OPT natural
+| REPLACE "congruence" OPT natural "with" LIST1 constr
 | WITH "congruence" OPT natural OPT ( "with" LIST1 constr )
+| DELETE "simple" "congruence" OPT natural
+| REPLACE "simple" "congruence" OPT natural "with" LIST1 constr
+| WITH "simple" "congruence" OPT natural OPT ( "with" LIST1 constr )
 | DELETE "show" "ltac" "profile"
 | REPLACE "show" "ltac" "profile" "cutoff" integer
 | WITH "show" "ltac" "profile" OPT [ "cutoff" integer | string ]
@@ -1126,10 +1133,12 @@ simple_tactic: [
 | DELETE "transparent_abstract" tactic3
 | REPLACE "transparent_abstract" tactic3 "using" ident
 | WITH "transparent_abstract" ltac_expr3 OPT ( "using" ident )
-| "typeclasses" "eauto" OPT "bfs" OPT nat_or_var OPT ( "with" LIST1 preident )
+| "typeclasses" "eauto" OPT [ "bfs" | "dfs" ] OPT nat_or_var OPT ( "with" LIST1 preident )
+| DELETE "typeclasses" "eauto" "dfs" OPT nat_or_var "with" LIST1 preident
+| DELETE "typeclasses" "eauto" "dfs" OPT nat_or_var
 | DELETE "typeclasses" "eauto" "bfs" OPT nat_or_var "with" LIST1 preident
-| DELETE "typeclasses" "eauto" OPT nat_or_var "with" LIST1 preident
 | DELETE "typeclasses" "eauto" "bfs" OPT nat_or_var
+| DELETE "typeclasses" "eauto" OPT nat_or_var "with" LIST1 preident
 | DELETE "typeclasses" "eauto" OPT nat_or_var
 (* in Tactic Notation: *)
 | "setoid_replace" constr "with" constr OPT ( "using" "relation" constr ) OPT ( "in" hyp )
@@ -1315,9 +1324,6 @@ command: [
 | REPLACE "Remove" IDENT IDENT LIST1 table_value
 | WITH "Remove" setting_name LIST1 table_value
 | DELETE "Remove" IDENT LIST1 table_value
-| DELETE "Restore" "State" IDENT
-| DELETE "Restore" "State" ne_string
-| "Restore" "State" [ IDENT | ne_string ]
 | DELETE "Show"
 | DELETE "Show" natural
 | DELETE "Show" ident
@@ -1342,9 +1348,6 @@ command: [
 | DELETE "Undo" natural
 | REPLACE "Undo" "To" natural
 | WITH "Undo" OPT ( OPT "To" natural )
-| DELETE "Write" "State" IDENT
-| REPLACE "Write" "State" ne_string
-| WITH "Write" "State" [ IDENT | ne_string ]
 | DELETE "Abort"
 | DELETE "Abort" "All"
 | REPLACE "Abort" identref
@@ -1362,8 +1365,6 @@ command: [
 (* odd that these are in command while other notation-related ones are in syntax *)
 | REPLACE "Number" "Notation" reference reference reference OPT number_options ":" preident
 | WITH "Number" "Notation" reference reference reference OPT number_options ":" scope_name
-| REPLACE "Numeral" "Notation" reference reference reference ":" preident deprecated_number_modifier
-| WITH "Numeral" "Notation" reference reference reference ":" scope_name deprecated_number_modifier
 | REPLACE "String" "Notation" reference reference reference OPT string_option ":" preident
 | WITH "String" "Notation" reference reference reference OPT string_option ":" scope_name
 
@@ -1575,6 +1576,8 @@ vernac_control: [
 | WITH "Timeout" natural sentence
 | REPLACE "Fail" vernac_control
 | WITH "Fail" sentence
+| REPLACE "Succeed" vernac_control
+| WITH "Succeed" sentence
 | DELETE decorated_vernac
 ]
 

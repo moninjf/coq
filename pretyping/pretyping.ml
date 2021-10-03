@@ -490,6 +490,7 @@ type pretyper = {
   pretype_evar : pretyper -> existential_name CAst.t * (lident * glob_constr) list -> unsafe_judgment pretype_fun;
   pretype_patvar : pretyper -> Evar_kinds.matching_var_kind -> unsafe_judgment pretype_fun;
   pretype_app : pretyper -> glob_constr * glob_constr list -> unsafe_judgment pretype_fun;
+  pretype_proj : pretyper -> (Constant.t * glob_level list option) * glob_constr list * glob_constr -> unsafe_judgment pretype_fun;
   pretype_lambda : pretyper -> Name.t * binding_kind * glob_constr * glob_constr -> unsafe_judgment pretype_fun;
   pretype_prod : pretyper -> Name.t * binding_kind * glob_constr * glob_constr -> unsafe_judgment pretype_fun;
   pretype_letin : pretyper -> Name.t * glob_constr * glob_constr option * glob_constr -> unsafe_judgment pretype_fun;
@@ -520,6 +521,8 @@ let eval_pretyper self ~program_mode ~poly resolve_tc tycon env sigma t =
     self.pretype_patvar self knd ?loc ~program_mode ~poly resolve_tc tycon env sigma
   | GApp (c, args) ->
     self.pretype_app self (c, args) ?loc ~program_mode ~poly resolve_tc tycon env sigma
+  | GProj (hd, args, c) ->
+    self.pretype_proj self (hd, args, c) ?loc ~program_mode ~poly resolve_tc tycon env sigma
   | GLambda (na, bk, t, c) ->
     self.pretype_lambda self (na, bk, t, c) ?loc ~program_mode ~poly resolve_tc tycon env sigma
   | GProd (na, bk, t, c) ->
@@ -824,15 +827,32 @@ struct
         else sigma, resj
       | _ -> sigma, resj
     in
-    let rec apply_rec env sigma n resj resj_before_bidi candargs bidiargs = function
-      | [] -> sigma, resj, resj_before_bidi, List.rev bidiargs
+    let rec apply_rec env sigma n jval (subs, typ) val_before_bidi candargs bidiargs = function
+      | [] ->
+        let typ = Vars.esubst Vars.lift_substituend subs typ in
+        let resj = { uj_val = jval; uj_type = typ } in
+        sigma, resj, val_before_bidi, List.rev bidiargs
       | c::rest ->
         let bidi = n >= nargs_before_bidi in
         let argloc = loc_of_glob_constr c in
-        let sigma, resj, trace = Coercion.inh_app_fun ~program_mode resolve_tc !!env sigma resj in
-        let resty = whd_all !!env sigma resj.uj_type in
-        match EConstr.kind sigma resty with
-        | Prod (na,c1,c2) ->
+        let sigma, jval, na, c1, subs, c2, trace = match EConstr.kind sigma typ with
+        | Prod (na, c1, c2) ->
+          (* Fast path *)
+          let c1 = Vars.esubst Vars.lift_substituend subs c1 in
+          sigma, jval, na, c1, subs, c2, Coercion.empty_coercion_trace
+        | _ ->
+          let resj = { uj_val = jval; uj_type = Vars.esubst Vars.lift_substituend subs typ } in
+          let sigma, cresj, trace = Coercion.inh_app_fun ~program_mode resolve_tc !!env sigma resj in
+          let resty = whd_all !!env sigma cresj.uj_type in
+          let na, c1, c2 = match EConstr.kind sigma resty with
+          | Prod (na, c1, c2) -> (na, c1, c2)
+          | _ ->
+            let sigma, hj = pretype empty_tycon env sigma c in
+            error_cant_apply_not_functional
+              ?loc:(Loc.merge_opt floc argloc) !!env sigma resj [|hj|]
+          in
+          sigma, cresj.uj_val, na, c1, Esubst.subs_id 0, c2, trace
+        in
           let (sigma, hj), bidiargs =
             if bidi then
               (* We want to get some typing information from the context before
@@ -856,16 +876,13 @@ struct
               end
           in
           let sigma, ujval = adjust_evar_source sigma na.binder_name ujval in
-          let value, typ = app_f n (j_val resj) ujval, subst1 ujval c2 in
-          let resj = { uj_val = value; uj_type = typ } in
-          let resj_before_bidi = if bidi then resj_before_bidi else resj in
-          apply_rec env sigma (n+1) resj resj_before_bidi candargs bidiargs rest
-        | _ ->
-          let sigma, hj = pretype empty_tycon env sigma c in
-          error_cant_apply_not_functional
-            ?loc:(Loc.merge_opt floc argloc) !!env sigma resj [|hj|]
+          let subs = Esubst.subs_cons (Vars.make_substituend ujval) subs in
+          let jval = app_f n jval ujval in
+          let val_before_bidi = if bidi then val_before_bidi else jval in
+          apply_rec env sigma (n+1) jval (subs, c2) val_before_bidi candargs bidiargs rest
     in
-    let sigma, resj, resj_before_bidi, bidiargs = apply_rec env sigma 0 fj fj candargs [] args in
+    let typ = (Esubst.subs_id 0, fj.uj_type) in
+    let sigma, resj, val_before_bidi, bidiargs = apply_rec env sigma 0 fj.uj_val typ fj.uj_val candargs [] args in
     let sigma, resj = refresh_template env sigma resj in
     let sigma, resj, otrace = inh_conv_coerce_to_tycon ?loc ~program_mode resolve_tc env sigma resj tycon in
     let refine_arg n (sigma,t) (newarg,ty,origarg,trace) =
@@ -880,7 +897,7 @@ struct
     in
     (* We now refine any arguments whose typing was delayed for
        bidirectionality *)
-    let t = resj_before_bidi.uj_val in
+    let t = val_before_bidi in
     let sigma, t = List.fold_left_i refine_arg nargs_before_bidi (sigma,t) bidiargs in
     (* If we did not get a coercion trace (e.g. with `Program` coercions, we
     replaced user-provided arguments with inferred ones. Otherwise, we apply
@@ -895,15 +912,17 @@ struct
     in
     (sigma, resj)
 
+  let pretype_proj self ((f,us), args, c) =
+    fun ?loc ~program_mode ~poly resolve_tc tycon env sigma ->
+    pretype_app self (DAst.make ?loc (GRef (GlobRef.ConstRef f,us)), args @ [c])
+      ?loc ~program_mode ~poly resolve_tc tycon env sigma
+
   let pretype_lambda self (name, bk, c1, c2) =
     fun ?loc ~program_mode ~poly resolve_tc tycon env sigma ->
     let open Context.Rel.Declaration in
-    let sigma, tycon' =
-      match tycon with
-      | None -> sigma, tycon
-      | Some ty ->
-        let sigma, ty' = Coercion.inh_coerce_to_prod ?loc ~program_mode !!env sigma ty in
-        sigma, Some ty'
+    let tycon' = if program_mode
+      then Option.map (Coercion.remove_subset !!env sigma) tycon
+      else tycon
     in
     let sigma,name',dom,rng =
       match tycon' with
@@ -928,8 +947,11 @@ struct
           else
             sigma, Anonymous, None, None
         | _ ->
-          (* XXX no error to allow later coercion? Not sure if possible with funclass *)
-          error_not_product ?loc !!env sigma ty
+          if Reductionops.is_head_evar !!env sigma ty then sigma, Anonymous, None, None
+          else
+            (* No chance of unifying with a product.
+               NB: Funclass cannot be a source class so no coercions. *)
+            error_not_product ?loc !!env sigma ty
     in
     let dom_valcon = valcon_of_tycon dom in
     let sigma, j = eval_type_pretyper self ~program_mode ~poly resolve_tc dom_valcon env sigma c1 in
@@ -1262,16 +1284,27 @@ let pretype_type self c ?loc ~program_mode ~poly resolve_tc valcon (env : GlobEn
 
   let pretype_array self (u,t,def,ty) =
     fun ?loc ~program_mode ~poly resolve_tc tycon env sigma ->
+    let sigma, u = match u with
+      | None -> sigma, None
+      | Some [u] ->
+        let sigma, u = glob_level ?loc sigma u in
+        sigma, Some u
+      | Some u -> user_err ?loc Pp.(str "Universe instance should have length 1.")
+    in
     let sigma, tycon' = split_as_array !!env sigma tycon in
     let sigma, jty = eval_type_pretyper self ~program_mode ~poly resolve_tc tycon' env sigma ty in
     (* XXX not sure if we need to be this complex, I wrote this while
        being confused by broken universe substitutions *)
     let sigma, u = match Univ.Universe.level (Sorts.univ_of_sort jty.utj_type) with
-      | Some u ->
-        let sigma = Evd.make_nonalgebraic_variable sigma u in
-        sigma, u
+      | Some v ->
+        let sigma = Evd.make_nonalgebraic_variable sigma v in
+        let sigma = Option.cata (Evd.set_leq_level sigma v) sigma u in
+        sigma, Option.default v u
       | None ->
-        let sigma, u = Evd.new_univ_level_variable UState.univ_flexible sigma in
+        let sigma, u = match u with
+          | Some u -> sigma, u
+          | None -> Evd.new_univ_level_variable UState.univ_flexible sigma
+        in
         let sigma = Evd.set_leq_sort !!env sigma jty.utj_type
             (Sorts.sort_of_univ (Univ.Universe.make u))
         in
@@ -1302,6 +1335,7 @@ let default_pretyper =
     pretype_evar = pretype_evar;
     pretype_patvar = pretype_patvar;
     pretype_app = pretype_app;
+    pretype_proj = pretype_proj;
     pretype_lambda = pretype_lambda;
     pretype_prod = pretype_prod;
     pretype_letin = pretype_letin;

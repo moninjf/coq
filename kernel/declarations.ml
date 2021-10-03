@@ -54,8 +54,8 @@ type ('a, 'opaque) constant_def =
   | Primitive of CPrimitives.t (** or a primitive operation *)
 
 type universes =
-  | Monomorphic of Univ.ContextSet.t
-  | Polymorphic of Univ.AUContext.t
+  | Monomorphic
+  | Polymorphic of Univ.AbstractContext.t
 
 (** The [typing_flags] are instructions to the type-checker which
     modify its behaviour. The typing flags used in the type-checking
@@ -111,7 +111,7 @@ type abstr_info = {
   (** Section variables of this prefix *)
   abstr_subst : Univ.Instance.t;
   (** Actual names of the abstracted variables *)
-  abstr_uctx : Univ.AUContext.t;
+  abstr_uctx : Univ.AbstractContext.t;
   (** Universe quantification, same length as the substitution *)
 }
 
@@ -123,7 +123,7 @@ type cooking_info = {
 (* some contraints are in constant_constraints, some other may be in
  * the OpaqueDef *)
 type 'opaque pconstant_body = {
-    const_hyps : Constr.named_context; (** New: younger hyp at top *)
+    const_hyps : Constr.named_context; (** younger hyp at top *)
     const_body : (Constr.t, 'opaque) constant_def;
     const_type : types;
     const_relevance : Sorts.relevance;
@@ -182,21 +182,33 @@ type regular_inductive_arity = {
 
 type inductive_arity = (regular_inductive_arity, template_arity) declaration_arity
 
+(** {7 Datas specific to a single type of a block of mutually inductive type } *)
 type one_inductive_body = {
 (** {8 Primitive datas } *)
 
     mind_typename : Id.t; (** Name of the type: [Ii] *)
 
-    mind_arity_ctxt : Constr.rel_context; (** Arity context of [Ii] with parameters: [forall params, Ui] *)
+    mind_arity_ctxt : Constr.rel_context;
+ (** Arity context of [Ii]. It includes the context of parameters,
+     that is, it has the form [paramdecls, realdecls_i] such that [Ui]
+     (see above) is [forall realdecls_i, si] for some sort [si] and
+     such that [Ii] has thus type [forall paramdecls, forall
+     realdecls_i, si]. The context itself is represented internally as
+     a list in reverse order
+     [[realdecl_i{r_i};...;realdecl_i1;paramdecl_m;...;paramdecl_1]]. *)
 
     mind_arity : inductive_arity; (** Arity sort and original user arity *)
 
     mind_consnames : Id.t array; (** Names of the constructors: [cij] *)
 
     mind_user_lc : types array;
- (** Types of the constructors with parameters:  [forall params, Tij],
-     where the Ik are replaced by de Bruijn index in the
-     context I1:forall params, U1 ..  In:forall params, Un *)
+ (** Types of the constructors with parameters: [forall params, Tij],
+     where the recursive occurrences of the inductive types in [Tij]
+     (i.e. in the type of the j-th constructor of the i-th types of
+     the block a shown above) have the form [Ind ((mind,0),u)], ...,
+     [Ind ((mind,n-1),u)] for [u] the canonical abstract instance
+     associated to [mind_universes] and [mind] the name to which the
+     inductive block is bound in the environment. *)
 
 (** {8 Derived datas } *)
 
@@ -206,7 +218,18 @@ type one_inductive_body = {
 
     mind_kelim : Sorts.family; (** Highest allowed elimination sort *)
 
-    mind_nf_lc : (rel_context * types) array; (** Head normalized constructor types so that their conclusion exposes the inductive type *)
+    mind_nf_lc : (rel_context * types) array;
+ (** Head normalized constructor types so that their conclusion
+     exposes the inductive type. It includes the parameters, i.e. each
+     component of the array has the form [(decls_ij, Ii params realargs_ij)]
+     where [decls_ij] is the concatenation of the context of parameters
+     (possibly with let-ins) and of the arguments of the constructor
+     (possibly with let-ins). This context is internally represented
+     as a list [[cstrdecl_ij{q_ij};...;cstrdecl_ij1;paramdecl_m;...;paramdecl_1]]
+     such that the constructor in fine has type [forall paramdecls,
+     forall cstrdecls_ij, Ii params realargs_ij]] with [params] referring to
+     the assumptions of [paramdecls] and [realargs_ij] being the
+     "indices" specific to the constructor. *)
 
     mind_consnrealargs : int array;
  (** Number of expected proper arguments of the constructors (w/o params) *)
@@ -231,6 +254,8 @@ type recursivity_kind =
   | Finite (** = inductive *)
   | CoFinite (** = coinductive *)
   | BiFinite (** = non-recursive, like in "Record" definitions *)
+
+(** {7 Datas associated to a full block of mutually inductive types } *)
 
 type mutual_inductive_body = {
 
@@ -282,7 +307,7 @@ type ('ty,'a) functorize =
 
 type with_declaration =
   | WithMod of Id.t list * ModPath.t
-  | WithDef of Id.t list * (constr * Univ.AUContext.t option)
+  | WithDef of Id.t list * (constr * Univ.AbstractContext.t option)
 
 type module_alg_expr =
   | MEident of ModPath.t

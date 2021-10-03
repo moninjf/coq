@@ -104,13 +104,10 @@ let mis_is_recursive (ind,mib,mip) =
     mip.mind_recargs
 
 let mis_nf_constructor_type ((ind,u),mib,mip) j =
-  let specif = mip.mind_nf_lc
-  and ntypes = mib.mind_ntypes
-  and nconstr = Array.length mip.mind_consnames in
-  let make_Ik k = mkIndU (((fst ind),ntypes-k-1),u) in
+  let nconstr = Array.length mip.mind_consnames in
   if j > nconstr then user_err Pp.(str "Not enough constructors in the type.");
-  let (ctx, cty) = specif.(j - 1) in
-  substl (List.init ntypes make_Ik) (subst_instance_constr u (Term.it_mkProd_or_LetIn cty ctx))
+  let (ctx, cty) = mip.mind_nf_lc.(j - 1) in
+  subst_instance_constr u (Term.it_mkProd_or_LetIn cty ctx)
 
 (* Number of constructors *)
 
@@ -308,7 +305,7 @@ let lift_constructor n cs = {
   cs_cstr = cs.cs_cstr;
   cs_params = List.map (lift n) cs.cs_params;
   cs_nargs = cs.cs_nargs;
-  cs_args = lift_rel_context n cs.cs_args;
+  cs_args = Vars.lift_rel_context n cs.cs_args;
   cs_concl_realargs = Array.map (liftn n (cs.cs_nargs+1)) cs.cs_concl_realargs
 }
 
@@ -318,7 +315,7 @@ let instantiate_params t params sign =
   (* Adjust the signature if recursively non-uniform parameters are not here *)
   let _,sign = context_chop nnonrecpar sign in
   let _,t = decompose_prod_n_assum (Context.Rel.length sign) t in
-  let subst = subst_of_rel_context_instance sign params in
+  let subst = subst_of_rel_context_instance_list sign params in
   substl subst t
 
 let get_constructor ((ind,u as indu),mib,mip,params) j =
@@ -419,7 +416,7 @@ let get_arity env ((ind,u),params) =
   let parsign = Vars.subst_instance_context u parsign in
   let arproperlength = List.length mip.mind_arity_ctxt - List.length parsign in
   let arsign,_ = List.chop arproperlength mip.mind_arity_ctxt in
-  let subst = subst_of_rel_context_instance parsign params in
+  let subst = subst_of_rel_context_instance_list parsign params in
   let arsign = Vars.subst_instance_context u arsign in
   (substl_rel_context subst arsign, Inductive.inductive_sort_family mip)
 
@@ -428,14 +425,14 @@ let build_dependent_constructor cs =
   applist
     (mkConstructU cs.cs_cstr,
      (List.map (lift cs.cs_nargs) cs.cs_params)
-      @(Context.Rel.to_extended_list mkRel 0 cs.cs_args))
+      @(Context.Rel.instance_list mkRel 0 cs.cs_args))
 
 let build_dependent_inductive env ((ind, params) as indf) =
   let arsign,_ = get_arity env indf in
   let nrealargs = List.length arsign in
   applist
     (mkIndU ind,
-     (List.map (lift nrealargs) params)@(Context.Rel.to_extended_list mkRel 0 arsign))
+     (List.map (lift nrealargs) params)@(Context.Rel.instance_list mkRel 0 arsign))
 
 (* builds the arity of an elimination predicate in sort [s] *)
 
@@ -486,16 +483,14 @@ let compute_projections env (kn, i as ind) =
   in
   let pkt = mib.mind_packets.(i) in
   let { mind_nparams = nparamargs; mind_params_ctxt = params } = mib in
-  let subst = List.init mib.mind_ntypes (fun i -> mkIndU ((kn, mib.mind_ntypes - i - 1), u)) in
-  let ctx, cty = pkt.mind_nf_lc.(0) in
-  let rctx, _ = decompose_prod_assum (substl subst (Term.it_mkProd_or_LetIn cty ctx)) in
-  let ctx, paramslet = List.chop pkt.mind_consnrealdecls.(0) rctx in
+  let ctx, _ = pkt.mind_nf_lc.(0) in
+  let ctx, paramslet = List.chop pkt.mind_consnrealdecls.(0) ctx in
   (* We build a substitution smashing the lets in the record parameters so
      that typechecking projections requires just a substitution and not
      matching with a parameter context. *)
   let indty =
     (* [ty] = [Ind inst] is typed in context [params] *)
-    let inst = Context.Rel.to_extended_vect mkRel 0 paramslet in
+    let inst = Context.Rel.instance mkRel 0 paramslet in
     let indu = mkIndU (ind, u) in
     let ty = mkApp (indu, inst) in
     (* [Ind inst] is typed in context [params-wo-let] *)

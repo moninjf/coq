@@ -36,6 +36,7 @@ let _sym_eq     = lazy (Coqlib.lib_ref "core.eq.sym")
 let _trans_eq   = lazy (Coqlib.lib_ref "core.eq.trans")
 let _eq         = lazy (Coqlib.lib_ref "core.eq.type")
 let _False      = lazy (Coqlib.lib_ref "core.False.type")
+let _not        = lazy (Coqlib.lib_ref "core.not.type")
 
 let whd env sigma t =
   Reductionops.clos_whd_flags CClosure.betaiotazeta env sigma t
@@ -43,22 +44,25 @@ let whd env sigma t =
 let whd_delta env sigma t =
   Reductionops.clos_whd_flags CClosure.all env sigma t
 
+let whd_in_concl =
+  reduct_in_concl ~check:false (Reductionops.whd_all, REVERTcast)
+
 (* decompose member of equality in an applicative format *)
 
 (** FIXME: evar leak *)
 let sf_of env sigma c = snd (sort_of env sigma c)
 
-let rec decompose_term env sigma t=
+let rec decompose_term env sigma t =
     match EConstr.kind sigma (whd env sigma t) with
       App (f,args)->
         let tf=decompose_term env sigma f in
         let targs=Array.map (decompose_term env sigma) args in
-          Array.fold_left (fun s t->Appli (s,t)) tf targs
+          Array.fold_left (fun s t-> ATerm.mkAppli (s,t)) tf targs
     | Prod (_,a,_b) when noccurn sigma 1 _b ->
         let b = Termops.pop _b in
         let sort_b = sf_of env sigma b in
         let sort_a = sf_of env sigma a in
-        Appli(Appli(Product (sort_a,sort_b) ,
+        ATerm.mkAppli (ATerm.mkAppli (ATerm.mkProduct (sort_a,sort_b),
                     decompose_term env sigma a),
               decompose_term env sigma b)
     | Construct c ->
@@ -68,18 +72,18 @@ let rec decompose_term env sigma t=
         let canon_ind = canon_mind,i_ind in
         let (oib,_)=Global.lookup_inductive (canon_ind) in
         let nargs=constructor_nallargs env (canon_ind,i_con) in
-          Constructor {ci_constr= ((canon_ind,i_con),u);
+          ATerm.mkConstructor {ci_constr= ((canon_ind,i_con),u);
                        ci_arity=nargs;
                        ci_nhyps=nargs-oib.mind_nparams}
     | Ind c ->
         let (mind,i_ind),u = c in
         let u = EInstance.kind sigma u in
         let canon_mind = MutInd.make1 (MutInd.canonical mind) in
-        let canon_ind = canon_mind,i_ind in  (Symb (Constr.mkIndU (canon_ind,u)))
+        let canon_ind = canon_mind,i_ind in ATerm.mkSymb (Constr.mkIndU (canon_ind,u))
     | Const (c,u) ->
         let u = EInstance.kind sigma u in
         let canon_const = Constant.make1 (Constant.canonical c) in
-          (Symb (Constr.mkConstU (canon_const,u)))
+          ATerm.mkSymb (Constr.mkConstU (canon_const,u))
     | Proj (p, c) ->
         let canon_mind kn = MutInd.make1 (MutInd.canonical kn) in
         let p' = Projection.map canon_mind p in
@@ -87,12 +91,12 @@ let rec decompose_term env sigma t=
         decompose_term env sigma c
     | _ ->
        let t = Termops.strip_outer_cast sigma t in
-       if closed0 sigma t then Symb (EConstr.to_constr ~abort_on_undefined_evars:false sigma t) else raise Not_found
+       if closed0 sigma t then ATerm.mkSymb (EConstr.to_constr ~abort_on_undefined_evars:false sigma t) else raise Not_found
 
 (* decompose equality in members and type *)
 
-let atom_of_constr env sigma term =
-  let wh = whd_delta env sigma term in
+let atom_of_constr b env sigma term =
+  let wh = (if b then whd else whd_delta) env sigma term in
   let kot = EConstr.kind sigma wh in
     match kot with
       App (f,args)->
@@ -106,41 +110,54 @@ let atom_of_constr env sigma term =
 let rec pattern_of_constr env sigma c =
   match EConstr.kind sigma (whd env sigma c) with
       App (f,args)->
-        let pf = decompose_term env sigma f in
         let pargs,lrels = List.split
           (Array.map_to_list (pattern_of_constr env sigma) args) in
+        begin match EConstr.kind sigma f with
+          Rel i ->
+            PVar (i, List.rev pargs),
+              List.fold_left Int.Set.union (Int.Set.singleton i) lrels
+        | _ ->
+          let pf = decompose_term env sigma f in
           PApp (pf,List.rev pargs),
-        List.fold_left Int.Set.union Int.Set.empty lrels
+            List.fold_left Int.Set.union Int.Set.empty lrels
+        end
     | Prod (_,a,_b) when noccurn sigma 1 _b ->
         let b = Termops.pop _b in
         let pa,sa = pattern_of_constr env sigma a in
         let pb,sb = pattern_of_constr env sigma b in
         let sort_b = sf_of env sigma b in
         let sort_a = sf_of env sigma a in
-          PApp(Product (sort_a,sort_b),
+          PApp(ATerm.mkProduct (sort_a,sort_b),
                [pa;pb]),(Int.Set.union sa sb)
-    | Rel i -> PVar i,Int.Set.singleton i
+    | Rel i -> PVar (i, []),Int.Set.singleton i
     | _ ->
         let pf = decompose_term env sigma c in
           PApp (pf,[]),Int.Set.empty
 
 let non_trivial = function
-    PVar _ -> false
+    PVar (_, []) -> false
   | _ -> true
 
-let patterns_of_constr env sigma nrels term=
+let rec has_open_head = function
+    PVar (_, _::_) -> true
+  | PApp (_, args) -> List.exists has_open_head args
+  | _ -> false
+
+let patterns_of_constr b env sigma nrels term =
   let f,args=
-    try destApp sigma (whd_delta env sigma term) with DestKO -> raise Not_found in
+    try destApp sigma ((if b then whd else whd_delta) env sigma term) with DestKO -> raise Not_found in
         if isRefX sigma (Lazy.force _eq) f && Int.equal (Array.length args) 3
         then
           let patt1,rels1 = pattern_of_constr env sigma args.(1)
           and patt2,rels2 = pattern_of_constr env sigma args.(2) in
           let valid1 =
             if not (Int.equal (Int.Set.cardinal rels1) nrels) then Creates_variables
+            else if has_open_head patt1 then Creates_variables (* consider open head as variable-creating *)
             else if non_trivial patt1 then Normal
             else Trivial (EConstr.to_constr sigma args.(0))
           and valid2 =
             if not (Int.equal (Int.Set.cardinal rels2) nrels) then Creates_variables
+            else if has_open_head patt2 then Creates_variables (* consider open head as variable-creating *)
             else if non_trivial patt2 then Normal
             else Trivial (EConstr.to_constr sigma args.(0)) in
             if valid1 != Creates_variables
@@ -149,39 +166,47 @@ let patterns_of_constr env sigma nrels term=
             else raise Not_found
         else raise Not_found
 
-let rec quantified_atom_of_constr env sigma nrels term =
-  match EConstr.kind sigma (whd_delta env sigma term) with
+let rec quantified_atom_of_constr b env sigma nrels term =
+  match EConstr.kind sigma ((if b then whd else whd_delta) env sigma term) with
       Prod (id,atom,ff) ->
         if isRefX sigma (Lazy.force _False) ff then
-          let patts=patterns_of_constr env sigma nrels atom in
+          let patts=patterns_of_constr b env sigma nrels atom in
               `Nrule patts
         else
-          quantified_atom_of_constr (EConstr.push_rel (RelDecl.LocalAssum (id,atom)) env) sigma (succ nrels) ff
+          quantified_atom_of_constr b (EConstr.push_rel (RelDecl.LocalAssum (id,atom)) env) sigma (succ nrels) ff
+    | App (f,[|atom|]) when isRefX sigma (Lazy.force _not) f ->
+        let patts=patterns_of_constr b env sigma nrels atom in
+              `Nrule patts
     | _ ->
-        let patts=patterns_of_constr env sigma nrels term in
+        let patts=patterns_of_constr b env sigma nrels term in
             `Rule patts
 
-let litteral_of_constr env sigma term=
-  match EConstr.kind sigma (whd_delta env sigma term) with
+let litteral_of_constr b env sigma term =
+  match EConstr.kind sigma ((if b then whd else whd_delta) env sigma term) with
     | Prod (id,atom,ff) ->
         if isRefX sigma (Lazy.force _False) ff then
-          match (atom_of_constr env sigma atom) with
+          match (atom_of_constr b env sigma atom) with
               `Eq(t,a,b) -> `Neq(t,a,b)
             | `Other(p) -> `Nother(p)
         else
           begin
             try
-              quantified_atom_of_constr (EConstr.push_rel (RelDecl.LocalAssum (id,atom)) env) sigma 1 ff
+              quantified_atom_of_constr b (EConstr.push_rel (RelDecl.LocalAssum (id,atom)) env) sigma 1 ff
             with Not_found ->
               `Other (decompose_term env sigma term)
           end
+    | App (f,[|atom|]) when isRefX sigma (Lazy.force _not) f ->
+          begin match (atom_of_constr b env sigma atom) with
+              `Eq(t,a,b) -> `Neq(t,a,b)
+            | `Other(p) -> `Nother(p)
+          end
     | _ ->
-        atom_of_constr env sigma term
+        atom_of_constr b env sigma term
 
 
 (* store all equalities from the context *)
 
-let make_prb gls depth additionnal_terms =
+let make_prb gls depth additional_terms b =
   let open Tacmach.New in
   let env=pf_env gls in
   let sigma=project gls in
@@ -191,13 +216,13 @@ let make_prb gls depth additionnal_terms =
     List.iter
       (fun c ->
          let t = decompose_term env sigma c in
-           ignore (add_term state t)) additionnal_terms;
+           ignore (add_aterm state t)) additional_terms;
     List.iter
       (fun decl ->
          let id = NamedDecl.get_id decl in
          begin
            let cid=Constr.mkVar id in
-           match litteral_of_constr env sigma (NamedDecl.get_type decl) with
+           match litteral_of_constr b env sigma (NamedDecl.get_type decl) with
                `Eq (t,a,b) -> add_equality state cid a b
              | `Neq (t,a,b) -> add_disequality state (Hyp cid) a b
              | `Other ph ->
@@ -216,7 +241,7 @@ let make_prb gls depth additionnal_terms =
              | `Nrule patts -> add_quant state id false patts
          end) (Proofview.Goal.hyps gls);
     begin
-      match atom_of_constr env sigma (pf_concl gls) with
+      match atom_of_constr b env sigma (pf_concl gls) with
           `Eq (t,a,b) -> add_disequality state Goal a b
         |	`Other g ->
                   List.iter
@@ -286,7 +311,7 @@ let type_and_refresh c k =
     Proofview.tclTHEN (Proofview.Unsafe.tclEVARS evm) (k ty)
   end
 
-let constr_of_term c = EConstr.of_constr (constr_of_term c)
+let constr_of_term c = EConstr.of_constr (ATerm.constr c)
 
 let rec proof_tac p : unit Proofview.tactic =
   Proofview.Goal.enter begin fun gl ->
@@ -412,22 +437,22 @@ let discriminate_tac cstru p =
 
 let build_term_to_complete uf pac =
   let cinfo = get_constructor_info uf pac.cnode in
-  let real_args = List.rev_map (fun i -> constr_of_term (term uf i)) pac.args in
+  let real_args = List.rev_map (fun i -> constr_of_term (aterm uf i)) pac.args in
   let (kn, u) = cinfo.ci_constr in
   (applist (mkConstructU (kn, EInstance.make u), real_args), pac.arity)
 
-let cc_tactic depth additionnal_terms =
+let cc_tactic depth additional_terms b =
   Proofview.Goal.enter begin fun gl ->
     let sigma = Tacmach.New.project gl in
     Coqlib.(check_required_library logic_module_name);
     let _ = debug_congruence (fun () -> Pp.str "Reading goal ...") in
-    let state = make_prb gl depth additionnal_terms in
+    let state = make_prb gl depth additional_terms b in
     let _ = debug_congruence (fun () -> Pp.str "Problem built, solving ...") in
     let sol = execute true state in
     let _ = debug_congruence (fun () -> Pp.str "Computation completed.") in
     let uf=forest state in
     match sol with
-      None -> Tacticals.New.tclFAIL 0 (str "congruence failed")
+      None -> Tacticals.New.tclFAIL 0 (str (if b then "simple congruence failed" else "congruence failed"))
     | Some reason ->
       debug_congruence (fun () -> Pp.str "Goal solved, generating proof ...");
       match reason with
@@ -462,7 +487,7 @@ let cc_tactic depth additionnal_terms =
       | Contradiction dis ->
         let env = Proofview.Goal.env gl in
         let p=build_proof env sigma uf (`Prove (dis.lhs,dis.rhs)) in
-        let ta=term uf dis.lhs and tb=term uf dis.rhs in
+        let ta=aterm uf dis.lhs and tb=aterm uf dis.rhs in
         match dis.rule with
           Goal -> proof_tac p
         | Hyp id -> refute_tac (EConstr.of_constr id) ta tb p
@@ -475,9 +500,46 @@ let cc_tactic depth additionnal_terms =
           convert_to_hyp_tac ida ta idb tb p
   end
 
+let id t = mkLambda (make_annot Anonymous Sorts.Relevant, t, mkRel 1)
+
+(* convertible to (not False) -> P -> not P *)
+let mk_neg_ty ff t nt =
+  mkArrowR (mkArrowR ff ff) (mkArrowR t nt)
+
+(* proof of ((not False) -> P -> not P) -> not P *)
+let mk_neg_tm ff t nt =
+  mkLambda (make_annot Anonymous Sorts.Relevant, mk_neg_ty ff t nt,
+    mkLambda (make_annot Anonymous Sorts.Relevant, t,
+      mkApp (mkRel 2,[|id ff; mkRel 1; mkRel 1|])))
+
+(* for [simple congruence] process conclusion (not P) *)
+let negative_concl_introf =
+  Proofview.Goal.enter begin fun gl ->
+    let sigma = Proofview.Goal.sigma gl in
+    let env = Proofview.Goal.env gl in
+    let concl = Proofview.Goal.concl gl in
+    let nt = whd env sigma concl in
+    match EConstr.kind sigma nt with
+      Prod (_,_,ff) when isRefX sigma (Lazy.force _False) ff -> introf
+    | App (f,[|t|]) when isRefX sigma (Lazy.force _not) f ->
+        Tacticals.New.pf_constr_of_global (Lazy.force _False) >>= fun ff ->
+        Refine.refine ~typecheck:true begin fun sigma ->
+          let sigma, e = Evarutil.new_evar env sigma (mk_neg_ty ff t nt) in sigma, (mkApp (mk_neg_tm ff t nt, [|e|]))
+        end >>= fun _ -> intro >>= fun _ -> intro
+    | _ -> Tacticals.New.tclIDTAC
+  end
 
 let congruence_tac depth l =
-  Tacticals.New.tclTHEN (Tacticals.New.tclREPEAT introf) (cc_tactic depth l)
+  Tacticals.New.tclTHEN
+    (Tacticals.New.tclREPEAT (Tacticals.New.tclFIRST [intro; Tacticals.New.tclTHEN whd_in_concl intro]))
+    (cc_tactic depth l false)
+
+
+let simple_congruence_tac depth l =
+  Tacticals.New.tclTHENLIST [
+    Tacticals.New.tclREPEAT intro;
+    negative_concl_introf;
+    cc_tactic depth l true]
 
 (* Beware: reflexivity = constructor 1 = apply refl_equal
    might be slow now, let's rather do something equivalent

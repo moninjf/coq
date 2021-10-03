@@ -245,6 +245,7 @@ module Prim =
     let string = Entry.create "string"
     let lstring = Entry.create "lstring"
     let reference = Entry.create "reference"
+    let fields = Entry.create "fields"
     let by_notation = Entry.create "by_notation"
     let smart_global = Entry.create "smart_global"
     let strategy_level = Entry.create "strategy_level"
@@ -258,7 +259,6 @@ module Prim =
     let univ_decl = Entry.create "univ_decl"
     let ident_decl = Entry.create "ident_decl"
     let pattern_ident = Entry.create "pattern_ident"
-    let pattern_identref = pattern_ident (* To remove in 8.14 *)
 
     (* A synonym of ident - maybe ident will be located one day *)
     let base_ident = Entry.create "base_ident"
@@ -280,7 +280,6 @@ module Constr =
     (* Entries that can be referred via the string -> Entry.t table *)
     let constr = Entry.create "constr"
     let term = Entry.create "term"
-    let operconstr = term
     let constr_eoi = eoi_entry constr
     let lconstr = Entry.create "lconstr"
     let binder_constr = Entry.create "binder_constr"
@@ -293,7 +292,6 @@ module Constr =
     let pattern = Entry.create "pattern"
     let constr_pattern = Entry.create "constr_pattern"
     let cpattern = Entry.create "cpattern"
-    let lconstr_pattern = cpattern
     let closed_binder = Entry.create "closed_binder"
     let binder = Entry.create "binder"
     let binders = Entry.create "binders"
@@ -304,7 +302,6 @@ module Constr =
     let typeclass_constraint = Entry.create "typeclass_constraint"
     let record_declaration = Entry.create "record_declaration"
     let arg = Entry.create "arg"
-    let appl_arg = arg
     let type_cstr = Entry.create "type_cstr"
   end
 

@@ -103,8 +103,8 @@ term8: [
 ]
 
 term1: [
-| term0 ".(" global LIST0 arg ")"
-| term0 ".(" "@" global LIST0 ( term9 ) ")"
+| term0 ".(" global univ_annot LIST0 arg ")"
+| term0 ".(" "@" global univ_annot LIST0 ( term9 ) ")"
 | term0 "%" IDENT
 | term0
 ]
@@ -112,6 +112,9 @@ term1: [
 term0: [
 | atomic_constr
 | term_match
+| ident Prim.fields univ_annot
+| ident univ_annot
+| NUMBER
 | "(" term200 ")"
 | "{|" record_declaration bar_cbrace
 | "{" binder_constr "}"
@@ -165,9 +168,7 @@ arg: [
 ]
 
 atomic_constr: [
-| global univ_annot
 | sort
-| NUMBER
 | string
 | "_"
 | "?" "[" identref "]"
@@ -500,7 +501,6 @@ command: [
 | "Abort"
 | "Abort" "All"
 | "Abort" identref
-| "Existential" natural constr_body
 | "Admitted"
 | "Qed"
 | "Save" identref
@@ -557,10 +557,6 @@ command: [
 | "Test" setting_name
 | "Remove" IDENT IDENT LIST1 table_value
 | "Remove" IDENT LIST1 table_value
-| "Write" "State" IDENT
-| "Write" "State" ne_string
-| "Restore" "State" IDENT
-| "Restore" "State" ne_string
 | "Reset" "Initial"
 | "Reset" identref
 | "Back"
@@ -608,7 +604,6 @@ command: [
 | "Derive" "Dependent" "Inversion_clear" ident "with" constr "Sort" sort_family
 | "Declare" "Left" "Step" constr
 | "Declare" "Right" "Step" constr
-| "Grab" "Existential" "Variables"
 | "Unshelve"
 | "Declare" "Equivalent" "Keys" constr constr
 | "Print" "Equivalent" "Keys"
@@ -702,7 +697,6 @@ command: [
 | "Hint" "View" ssrviewposspc LIST1 ssrhintref      (* SSR plugin *)
 | "Search" ssr_search_arg ssr_modlocs      (* SSR plugin *)
 | "Number" "Notation" reference reference reference OPT number_options ":" preident
-| "Numeral" "Notation" reference reference reference ":" preident deprecated_number_modifier
 | "String" "Notation" reference reference reference OPT string_option ":" preident
 | "Ltac2" ltac2_entry      (* Ltac2 plugin *)
 | "Ltac2" "Eval" ltac2_expr6      (* Ltac2 plugin *)
@@ -745,6 +739,7 @@ vernac_control: [
 | "Redirect" ne_string vernac_control
 | "Timeout" natural vernac_control
 | "Fail" vernac_control
+| "Succeed" vernac_control
 | decorated_vernac
 ]
 
@@ -1257,7 +1252,6 @@ printable: [
 | "Grammar" IDENT
 | "Custom" "Grammar" IDENT
 | "LoadPath" OPT dirpath
-| "Modules"
 | "Libraries"
 | "ML" "Path"
 | "ML" "Modules"
@@ -1464,10 +1458,10 @@ binder_interp: [
 
 simple_tactic: [
 | "btauto"
-| "congruence"
-| "congruence" natural
-| "congruence" "with" LIST1 constr
-| "congruence" natural "with" LIST1 constr
+| "congruence" OPT natural
+| "congruence" OPT natural "with" LIST1 constr
+| "simple" "congruence" OPT natural
+| "simple" "congruence" OPT natural "with" LIST1 constr
 | "f_equal"
 | "firstorder" OPT tactic firstorder_using
 | "firstorder" OPT tactic "with" LIST1 preident
@@ -1640,7 +1634,6 @@ simple_tactic: [
 | "info_auto" OPT nat_or_var auto_using hintbases
 | "debug" "auto" OPT nat_or_var auto_using hintbases
 | "eauto" OPT nat_or_var OPT nat_or_var auto_using hintbases
-| "new" "auto" OPT nat_or_var auto_using hintbases
 | "debug" "eauto" OPT nat_or_var OPT nat_or_var auto_using hintbases
 | "info_eauto" OPT nat_or_var OPT nat_or_var auto_using hintbases
 | "dfs" "eauto" OPT nat_or_var auto_using hintbases
@@ -1650,9 +1643,11 @@ simple_tactic: [
 | "autounfold_one" hintbases
 | "unify" constr constr
 | "unify" constr constr "with" preident
+| "typeclasses" "eauto" "dfs" OPT nat_or_var "with" LIST1 preident
 | "typeclasses" "eauto" "bfs" OPT nat_or_var "with" LIST1 preident
 | "typeclasses" "eauto" OPT nat_or_var "with" LIST1 preident
 | "typeclasses" "eauto" "bfs" OPT nat_or_var
+| "typeclasses" "eauto" "dfs" OPT nat_or_var
 | "typeclasses" "eauto" OPT nat_or_var
 | "head_of_constr" ident constr
 | "not_evar" constr

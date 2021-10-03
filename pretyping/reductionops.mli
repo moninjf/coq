@@ -167,11 +167,9 @@ val whd_betadeltazeta :  reduction_function
 val whd_zeta_stack : stack_reduction_function
 val whd_zeta : reduction_function
 
-val shrink_eta : Environ.env -> constr -> constr
+val shrink_eta : evar_map -> constr -> constr
 
 (** Various reduction functions *)
-
-val safe_evar_value : evar_map -> Constr.existential -> Constr.constr option
 
 val beta_applist : evar_map -> constr * constr list -> constr
 
@@ -212,7 +210,7 @@ val is_transparent : Environ.env -> Constant.t tableKey -> bool
 
 (** {6 Conversion Functions (uses closures, lazy strategy) } *)
 
-type conversion_test = Constraint.t -> Constraint.t
+type conversion_test = Constraints.t -> Constraints.t
 
 val pb_is_equal : conv_pb -> bool
 val pb_equal : conv_pb -> conv_pb
@@ -261,6 +259,8 @@ val whd_nored_state : state_reduction_function
 
 val whd_betaiota_deltazeta_for_iota_state :
   TransparentState.t -> state_reduction_function
+
+val is_head_evar : env -> evar_map -> constr -> bool
 
 (** {6 Meta-related reduction functions } *)
 type meta_instance_subst

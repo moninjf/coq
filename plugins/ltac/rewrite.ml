@@ -774,7 +774,7 @@ let resolve_subrelation env car rel sort prf rel' res =
         rew_evars = evars }
 
 let resolve_morphism env m args args' (b,cstr) evars =
-  let evars, morph_instance, proj, sigargs, m', args, args' =
+  let evars, proj, sigargs, m', args, args' =
     let first = match (Array.findi (fun _ b -> not (Option.is_empty b)) args') with
     | Some i -> i
     | None -> invalid_arg "resolve_morphism" in
@@ -796,19 +796,18 @@ let resolve_morphism env m args args' (b,cstr) evars =
     let cl_args = [| appmtype' ; signature ; appm |] in
     let evars, app = app_poly_sort b env evars (if b then PropGlobal.proper_type env else TypeGlobal.proper_type env)
       cl_args in
-    let env' =
-      let dosub, appsub =
-        if b then PropGlobal.do_subrelation, PropGlobal.apply_subrelation
-        else TypeGlobal.do_subrelation, TypeGlobal.apply_subrelation
-      in
-        EConstr.push_named
-          (LocalDef (make_annot (Id.of_string "do_subrelation") Sorts.Relevant,
-                     snd (app_poly_sort b env evars dosub [||]),
-                     snd (app_poly_nocheck env evars appsub [||])))
-          env
+    let dosub, appsub =
+      if b then PropGlobal.do_subrelation, PropGlobal.apply_subrelation
+      else TypeGlobal.do_subrelation, TypeGlobal.apply_subrelation
     in
+    let _, dosub = app_poly_sort b env evars dosub [||] in
+    let _, appsub = app_poly_nocheck env evars appsub [||] in
+    let dosub_id = Id.of_string "do_subrelation" in
+    let env' = EConstr.push_named (LocalDef (make_annot dosub_id Sorts.Relevant, dosub, appsub)) env in
     let evars, morph = new_cstr_evar evars env' app in
-      evars, morph, morph, sigargs, appm, morphobjs, morphobjs'
+    (* Replace the free [dosub_id] in the evar by the global reference *)
+    let morph = Vars.replace_vars [dosub_id , dosub] morph in
+    evars, morph, sigargs, appm, morphobjs, morphobjs'
   in
   let projargs, subst, evars, respars, typeargs =
     Array.fold_left2
@@ -1757,15 +1756,15 @@ let rec strategy_of_ast ist = function
 
 (* By default the strategy for "rewrite_db" is top-down *)
 
-let mkappc s l = CAst.make @@ CAppExpl ((None,qualid_of_ident (Id.of_string s),None),l)
+let mkappc s l = CAst.make @@ CAppExpl ((qualid_of_ident (Id.of_string s),None),l)
 
 let declare_an_instance n s args =
   (((CAst.make @@ Name n),None),
-   CAst.make @@ CAppExpl ((None, qualid_of_string s,None), args))
+   CAst.make @@ CAppExpl ((qualid_of_string s,None), args))
 
 let declare_instance a aeq n s = declare_an_instance n s [a;aeq]
 
-let get_locality b = if b then Goptions.OptGlobal else Goptions.OptLocal
+let get_locality b = if b then Hints.SuperGlobal else Hints.Local
 
 let anew_instance atts binders (name,t) fields =
   let locality = get_locality atts.global in
@@ -1978,7 +1977,7 @@ let add_morphism atts binders m s n =
   let instance_name = (CAst.make @@ Name instance_id),None in
   let instance_t =
     CAst.make @@ CAppExpl
-      ((None, Libnames.qualid_of_string "Coq.Classes.Morphisms.Proper",None),
+      ((Libnames.qualid_of_string "Coq.Classes.Morphisms.Proper",None),
        [cHole; s; m])
   in
   let tac = Tacinterp.interp (make_tactic "add_morphism_tactic") in

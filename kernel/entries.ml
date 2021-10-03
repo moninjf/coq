@@ -17,8 +17,13 @@ open Constr
    types *)
 
 type universes_entry =
-  | Monomorphic_entry of Univ.ContextSet.t
-  | Polymorphic_entry of Name.t array * Univ.UContext.t
+  | Monomorphic_entry
+  | Polymorphic_entry of Univ.UContext.t
+
+type inductive_universes_entry =
+  | Monomorphic_ind_entry
+  | Polymorphic_ind_entry of Univ.UContext.t
+  | Template_ind_entry of Univ.ContextSet.t
 
 type variance_entry = Univ.Variance.t option array
 
@@ -40,7 +45,8 @@ type one_inductive_entry = {
   mind_entry_typename : Id.t;
   mind_entry_arity : constr;
   mind_entry_consnames : Id.t list;
-  mind_entry_lc : constr list }
+  mind_entry_lc : constr list;
+}
 
 type mutual_inductive_entry = {
   mind_entry_record : (Id.t array option) option;
@@ -50,8 +56,7 @@ type mutual_inductive_entry = {
   mind_entry_finite : Declarations.recursivity_kind;
   mind_entry_params : Constr.rel_context;
   mind_entry_inds : one_inductive_entry list;
-  mind_entry_universes : universes_entry;
-  mind_entry_template : bool; (* Use template polymorphism *)
+  mind_entry_universes : inductive_universes_entry;
   mind_entry_variance : variance_entry option;
   (* [None] if non-cumulative, otherwise associates each universe of
      the entry to [None] if to be inferred or [Some v] if to be
@@ -69,7 +74,8 @@ type definition_entry = {
   const_entry_feedback : Stateid.t option;
   const_entry_type : types option;
   const_entry_universes : universes_entry;
-  const_entry_inline_code : bool }
+  const_entry_inline_code : bool;
+}
 
 type section_def_entry = {
   secdef_body : constr;
@@ -90,8 +96,12 @@ type 'a opaque_entry = {
 
 type inline = int option (* inlining level, None for no inlining *)
 
-type parameter_entry =
-    Id.Set.t option * types in_universes_entry * inline
+type parameter_entry = {
+  parameter_entry_secctx : Id.Set.t option;
+  parameter_entry_type : types;
+  parameter_entry_universes : universes_entry;
+  parameter_entry_inline_code : inline;
+}
 
 type primitive_entry = {
   prim_entry_type : types in_universes_entry option;

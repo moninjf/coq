@@ -14,7 +14,6 @@ open EConstr
 open Environ
 open Evd
 open Tactypes
-open Clenv
 open Typeclasses
 
 (** {6 General functions. } *)
@@ -39,12 +38,9 @@ type 'a hint_ast =
   | Unfold_nth of Tacred.evaluable_global_reference       (* Hint Unfold *)
   | Extern     of Pattern.constr_pattern option * Genarg.glob_generic_argument       (* Hint Extern *)
 
-type hint = private {
-  hint_term : constr;
-  hint_type : types;
-  hint_uctx : Univ.ContextSet.t option;
-  hint_clnv : clausenv;
-}
+type hint
+
+val hint_as_term : hint -> Univ.ContextSet.t option * constr
 
 type 'a hints_path_atom_gen =
   | PathHints of 'a list
@@ -122,13 +118,6 @@ module Hint_db :
     val map_all : secvars:Id.Pred.t -> GlobRef.t -> t -> FullHint.t list
 
     (** All hints associated to the reference, respecting modes if evars appear in the
-        arguments, _not_ using the discrimination net.
-        Returns a [ModeMismatch] if there are declared modes and none matches.
-        *)
-    val map_existential : evar_map -> secvars:Id.Pred.t ->
-      (GlobRef.t * constr array) -> constr -> t -> FullHint.t list with_mode
-
-    (** All hints associated to the reference, respecting modes if evars appear in the
         arguments and using the discrimination net.
         Returns a [ModeMismatch] if there are declared modes and none matches. *)
     val map_eauto : env -> evar_map -> secvars:Id.Pred.t -> (GlobRef.t * constr array) -> constr -> t -> FullHint.t list with_mode
@@ -178,7 +167,10 @@ val searchtable_map : hint_db_name -> hint_db
 
 val searchtable_add : (hint_db_name * hint_db) -> unit
 
-val check_hint_locality : Goptions.option_locality -> unit
+type hint_locality = Local | Export | SuperGlobal
+
+val default_hint_locality : unit -> hint_locality
+(** Warns *)
 
 (** [create_hint_db local name st use_dn].
    [st] is a transparency state for unification using this db
@@ -187,13 +179,13 @@ val check_hint_locality : Goptions.option_locality -> unit
 
 val create_hint_db : bool -> hint_db_name -> TransparentState.t -> bool -> unit
 
-val remove_hints : locality:Goptions.option_locality -> hint_db_name list -> GlobRef.t list -> unit
+val remove_hints : locality:hint_locality -> hint_db_name list -> GlobRef.t list -> unit
 
 val current_db_names : unit -> String.Set.t
 
 val current_pure_db : unit -> hint_db list
 
-val add_hints : locality:Goptions.option_locality -> hint_db_name list -> hints_entry -> unit
+val add_hints : locality:hint_locality -> hint_db_name list -> hints_entry -> unit
 
 val hint_globref : GlobRef.t -> hint_term
 

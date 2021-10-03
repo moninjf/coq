@@ -11,9 +11,11 @@
 CI_TARGETS= \
     ci-aac_tactics \
     ci-argosy \
+    ci-autosubst \
     ci-bbv \
     ci-bedrock2 \
     ci-bignums \
+    ci-category_theory \
     ci-color \
     ci-compcert \
     ci-coq_dpdgraph \
@@ -72,6 +74,8 @@ ci-help:
 
 ci-all: $(CI_TARGETS)
 
+ci-category_theory: ci-equations
+
 ci-color: ci-bignums
 
 ci-coqprime: ci-bignums
@@ -90,6 +94,8 @@ ci-fourcolor: ci-mathcomp
 ci-oddorder: ci-mathcomp
 ci-fcsl_pcm: ci-mathcomp
 ci-mczify: ci-mathcomp
+
+ci-iris: ci-autosubst
 
 ci-geocoq: ci-mathcomp
 

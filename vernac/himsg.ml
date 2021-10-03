@@ -74,8 +74,8 @@ let rec contract3' env sigma a b c = function
   | IncompatibleInstances (env',ev,t1,t2) ->
       let (env',ev,t1,t2) = contract3 env' sigma (EConstr.mkEvar ev) t1 t2 in
       contract3 env sigma a b c, IncompatibleInstances (env',EConstr.destEvar sigma ev,t1,t2)
-  | NotSameArgSize | NotSameHead | NoCanonicalStructure
-  | MetaOccurInBody _ | InstanceNotSameType _ | ProblemBeyondCapabilities
+  | NotSameArgSize | NotSameHead | NoCanonicalStructure | MetaOccurInBody _
+  | InstanceNotSameType _ | InstanceNotFunctionalType _ | ProblemBeyondCapabilities
   | UnifUnivInconsistency _ as x -> contract3 env sigma a b c, x
   | CannotSolveConstraint ((pb,env',t,u),x) ->
       let env',t,u = contract2 env' sigma t u in
@@ -114,6 +114,13 @@ let canonize_constr sigma c =
   in
   canonize_binders c
 
+let rec display_expr_eq c1 c2 =
+  let open Constrexpr in
+  match CAst.(c1.v, c2.v) with
+  | (CHole _ | CEvar _), _ | _, (CEvar _ | CHole _) -> true
+  | _ ->
+    Constrexpr_ops.constr_expr_eq_gen display_expr_eq c1 c2
+
 (** Tries to realize when the two terms, albeit different are printed the same. *)
 let display_eq ~flags env sigma t1 t2 =
   (* terms are canonized, then their externalisation is compared syntactically *)
@@ -122,7 +129,7 @@ let display_eq ~flags env sigma t1 t2 =
   let t2 = canonize_constr sigma t2 in
   let ct1 = Flags.with_options flags (fun () -> extern_constr env sigma t1) () in
   let ct2 = Flags.with_options flags (fun () -> extern_constr env sigma t2) () in
-  Constrexpr_ops.constr_expr_eq ct1 ct2
+  display_expr_eq ct1 ct2
 
 (** This function adds some explicit printing flags if the two arguments are
     printed alike. *)
@@ -329,6 +336,14 @@ let explain_unification_error env sigma p1 p2 = function
         quote (pr_existential_key sigma evk) ++
         strbrk ": cannot ensure that " ++
         t ++ strbrk " is a subtype of " ++ u]
+     | InstanceNotFunctionalType (evk,env,f,u) ->
+        let env = make_all_name_different env sigma in
+        let f = pr_leconstr_env env sigma f in
+        let u = pr_leconstr_env env sigma u in
+        [str "unable to find a well-typed instantiation for " ++
+        quote (pr_existential_key sigma evk) ++
+        strbrk ": " ++ f ++
+        strbrk " is expected to have a functional type but it has type " ++ u]
      | UnifUnivInconsistency p ->
        [str "universe inconsistency: " ++
         Univ.explain_universe_inconsistency (Termops.pr_evd_level sigma) p]
@@ -979,14 +994,14 @@ let explain_not_match_error = function
           (UState.of_binders
              (Printer.universe_binders_with_opt_names auctx None))
       in
-      let uctx = AUContext.repr auctx in
+      let uctx = AbstractContext.repr auctx in
       Printer.pr_universe_instance_constraints sigma
         (UContext.instance uctx)
         (UContext.constraints uctx)
     in
     str "incompatible polymorphic binders: got" ++ spc () ++ h (pr_auctx got) ++ spc() ++
     str "but expected" ++ spc() ++ h (pr_auctx expect) ++
-    (if not (Int.equal (AUContext.size got) (AUContext.size expect)) then mt() else
+    (if not (Int.equal (AbstractContext.size got) (AbstractContext.size expect)) then mt() else
        fnl() ++ str "(incompatible constraints)")
   | IncompatibleVariance ->
     str "incompatible variance information"

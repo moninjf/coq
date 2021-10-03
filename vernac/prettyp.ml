@@ -205,7 +205,7 @@ let print_if_is_coercion ref =
 
 let pr_template_variables = function
   | [] -> mt ()
-  | vars -> str "on " ++ prlist_with_sep spc UnivNames.(pr_with_global_universes empty_binders) vars
+  | vars -> str " on " ++ prlist_with_sep spc UnivNames.(pr_with_global_universes empty_binders) vars
 
 let print_polymorphism ref =
   let poly = Global.is_polymorphic ref in
@@ -214,8 +214,8 @@ let print_polymorphism ref =
   [ pr_global ref ++ str " is " ++
       (if poly then str "universe polymorphic"
        else if template_poly then
-         str "template universe polymorphic "
-         ++ h (pr_template_variables template_variables)
+         str "template universe polymorphic"
+         ++ if !Detyping.print_universes then h (pr_template_variables template_variables) else mt()
        else str "not universe polymorphic") ]
 
 let print_type_in_type ref =
@@ -323,7 +323,12 @@ let print_arguments ref =
     | Some (UnfoldWhen { nargs; recargs }) -> [], recargs, nargs
     | Some (UnfoldWhenNoMatch { nargs; recargs }) -> [`ReductionDontExposeCase], recargs, nargs
   in
-  let renames = try Arguments_renaming.arguments_names ref with Not_found -> [] in
+  let names, not_renamed =
+    try Arguments_renaming.arguments_names ref, false
+    with Not_found ->
+      let env = Global.env () in
+      let ty, _ = Typeops.type_of_global_in_context env ref in
+      Impargs.compute_implicits_names env (Evd.from_env env) (EConstr.of_constr ty), true in
   let scopes = Notation.find_arguments_scope ref in
   let flags = if needs_extra_scopes ref scopes then `ExtraScopes::flags else flags in
   let impls = Impargs.extract_impargs_data (Impargs.implicits_of_global ref) in
@@ -331,7 +336,7 @@ let print_arguments ref =
     | (_, impls) :: rest -> impls, rest
     | [] -> assert false
   in
-  let impls = main_implicits 0 renames recargs scopes impls in
+  let impls = main_implicits 0 names recargs scopes impls in
   let moreimpls = List.map (fun (_,i) -> List.map extra_implicit_kind_of_status i) moreimpls in
   let bidi = Pretyping.get_bidirectionality_hint ref in
   let impls = insert_fake_args nargs_for_red bidi impls in
@@ -341,7 +346,7 @@ let print_arguments ref =
     let open Vernacexpr in
     [Ppvernac.pr_vernac_expr
        (VernacArguments (CAst.make (AN qid), impls, moreimpls, flags)) ++
-     (if renames = [] then mt () else
+     (if not_renamed then mt () else
       fnl () ++ str "  (where some original arguments have been renamed)")]
 
 let print_name_infos ref =
@@ -616,20 +621,7 @@ let print_constant with_values sep sp udecl =
   let cb = Global.lookup_constant sp in
   let val_0 = Global.body_of_constant_body Library.indirect_accessor cb in
   let typ = cb.const_type in
-  let univs =
-    let open Univ in
-    let otab = Global.opaque_tables () in
-    match cb.const_body with
-    | Undef _ | Def _ | Primitive _ -> cb.const_universes
-    | OpaqueDef o ->
-      let body_uctxs = Opaqueproof.force_constraints Library.indirect_accessor otab o in
-      match cb.const_universes with
-      | Monomorphic ctx ->
-        Monomorphic (ContextSet.union body_uctxs ctx)
-      | Polymorphic ctx ->
-        assert(ContextSet.is_empty body_uctxs);
-        Polymorphic ctx
-  in
+  let univs = cb.const_universes in
   let uctx =
     UState.of_binders
       (Printer.universe_binders_with_opt_names (Declareops.constant_polymorphic_context cb) udecl)

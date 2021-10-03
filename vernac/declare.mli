@@ -128,15 +128,6 @@ val declare_definition
   -> Evd.evar_map
   -> GlobRef.t
 
-val declare_assumption
-  :  name:Id.t
-  -> scope:Locality.locality
-  -> hook:Hook.t option
-  -> impargs:Impargs.manual_implicits
-  -> uctx:UState.t
-  -> Entries.parameter_entry
-  -> GlobRef.t
-
 type lemma_possible_guards = int list list
 
 val declare_mutually_recursive
@@ -319,7 +310,7 @@ module Proof : sig
 
 end
 
-(** {2 low-level, internla API, avoid using unless you have special needs } *)
+(** {2 low-level, internal API, avoid using unless you have special needs } *)
 
 (** Proof entries represent a proof that has been finished, but still
    not registered with the kernel.
@@ -328,15 +319,28 @@ end
    for removal from the public API, use higher-level declare APIs
    instead *)
 type 'a proof_entry
+type parameter_entry
+type primitive_entry
 
 val definition_entry
   :  ?opaque:bool
   -> ?using:Names.Id.Set.t
   -> ?inline:bool
   -> ?types:Constr.types
-  -> ?univs:Entries.universes_entry
+  -> ?univs:UState.named_universes_entry
   -> Constr.constr
   -> Evd.side_effects proof_entry
+
+val parameter_entry
+  :  ?inline:int
+  -> ?univs:UState.named_universes_entry
+  -> Constr.constr
+  -> parameter_entry
+
+val primitive_entry
+  :  ?types:(Constr.types * UState.named_universes_entry)
+  -> CPrimitives.op_or_type
+  -> primitive_entry
 
 (** XXX: This is an internal, low-level API and could become scheduled
     for removal from the public API, use higher-level declare APIs
@@ -357,6 +361,7 @@ val declare_variable
   -> kind:Decls.logical_kind
   -> typ:Constr.types
   -> impl:Glob_term.binding_kind
+  -> univs:UState.named_universes_entry
   -> unit
 
 (** Declaration of global constructions
@@ -367,15 +372,15 @@ val declare_variable
    instead *)
 type 'a constant_entry =
   | DefinitionEntry of 'a proof_entry
-  | ParameterEntry of Entries.parameter_entry
-  | PrimitiveEntry of Entries.primitive_entry
+  | ParameterEntry of parameter_entry
+  | PrimitiveEntry of primitive_entry
 
 val prepare_parameter
   : poly:bool
   -> udecl:UState.universe_decl
   -> types:EConstr.types
   -> Evd.evar_map
-  -> Evd.evar_map * Entries.parameter_entry
+  -> Evd.evar_map * parameter_entry
 
 (** [declare_constant id cd] declares a global declaration
    (constant/parameter) with name [id] in the current section; it returns
@@ -409,7 +414,7 @@ val build_by_tactic
   -> poly:bool
   -> typ:EConstr.types
   -> unit Proofview.tactic
-  -> Constr.constr * Constr.types option * Entries.universes_entry * bool * UState.t
+  -> Constr.constr * Constr.types option * (UState.named_universes_entry) * bool * UState.t
 
 (** {2 Program mode API} *)
 
@@ -550,6 +555,8 @@ val admit_obligations : pm:OblState.t -> Names.Id.t option -> OblState.t
 val check_program_libraries : unit -> unit
 
 end
+
+val is_local_constant : Constant.t -> bool
 
 (** {6 For internal support, do not use}  *)
 

@@ -446,8 +446,6 @@ let pr_state env sigma (tm,sk) =
 (*** Reduction Functions Operators ***)
 (*************************************)
 
-let safe_evar_value = Evarutil.safe_evar_value
-
 let safe_meta_value sigma ev =
   try Some (Evd.meta_value sigma ev)
   with Not_found -> None
@@ -455,8 +453,6 @@ let safe_meta_value sigma ev =
 (*************************************)
 (*** Reduction using bindingss ***)
 (*************************************)
-
-let eta = CClosure.RedFlags.mkflags [CClosure.RedFlags.fETA]
 
 (* Beta Reduction tools *)
 
@@ -686,7 +682,7 @@ let apply_branch env sigma (ind, i) args (ci, u, pms, iv, r, lf) =
     let ctx = expand_branch env sigma u pms (ind, i) br in
     applist (it_mkLambda_or_LetIn (snd br) ctx, args)
 
-let rec whd_state_gen flags env sigma =
+let whd_state_gen flags env sigma =
   let open Context.Named.Declaration in
   let rec whrec (x, stack) : state =
     let () =
@@ -751,22 +747,6 @@ let rec whd_state_gen flags env sigma =
       (match Stack.decomp stack with
       | Some _ when CClosure.RedFlags.red_set flags CClosure.RedFlags.fBETA ->
         apply_subst (fun _ -> whrec) [] sigma x stack
-      | None when CClosure.RedFlags.red_set flags CClosure.RedFlags.fETA ->
-        let env' = push_rel (LocalAssum (na, t)) env in
-        let whrec' = whd_state_gen flags env' sigma in
-        (match EConstr.kind sigma (Stack.zip sigma (whrec' (c, Stack.empty))) with
-        | App (f,cl) ->
-          let napp = Array.length cl in
-          if napp > 0 then
-            let (x', l') = whrec' (Array.last cl, Stack.empty) in
-            match EConstr.kind sigma x', l' with
-            | Rel 1, [] ->
-              let lc = Array.sub cl 0 (napp-1) in
-              let u = if Int.equal napp 1 then f else mkApp (f,lc) in
-              if noccurn sigma 1 u then (pop u,Stack.empty) else fold ()
-            | _ -> fold ()
-          else fold ()
-        | _ -> fold ())
       | _ -> fold ())
 
     | Case (ci,u,pms,p,iv,d,lf) ->
@@ -848,20 +828,6 @@ let local_whd_state_gen flags env sigma =
       (match Stack.decomp stack with
       | Some (a,m) when CClosure.RedFlags.red_set flags CClosure.RedFlags.fBETA ->
         stacklam whrec [a] sigma c m
-      | None when CClosure.RedFlags.red_set flags CClosure.RedFlags.fETA ->
-        (match EConstr.kind sigma (Stack.zip sigma (whrec (c, Stack.empty))) with
-        | App (f,cl) ->
-          let napp = Array.length cl in
-          if napp > 0 then
-            let x', l' = whrec (Array.last cl, Stack.empty) in
-            match EConstr.kind sigma x', l' with
-            | Rel 1, [] ->
-              let lc = Array.sub cl 0 (napp-1) in
-              let u = if Int.equal napp 1 then f else mkApp (f,lc) in
-              if noccurn sigma 1 u then (pop u,Stack.empty) else s
-            | _ -> s
-          else s
-        | _ -> s)
       | _ -> s)
 
     | Proj (p,c) when CClosure.RedFlags.red_projection flags p ->
@@ -970,11 +936,35 @@ let whd_allnolet_state = raw_whd_state_gen CClosure.allnolet
 let whd_allnolet_stack = stack_red_of_state_red whd_allnolet_state
 let whd_allnolet = red_of_state_red whd_allnolet_state
 
-(* 4. Ad-hoc eta reduction, does not substitute evars *)
+let is_head_evar env sigma c =
+  let head, _ = whd_all_state env sigma (c,Stack.empty) in
+  EConstr.isEvar sigma head
 
-let shrink_eta env c =
-  let evd = Evd.from_env env in
-  Stack.zip evd (local_whd_state_gen eta env evd (c,Stack.empty))
+(* 4. Ad-hoc eta reduction *)
+
+let shrink_eta sigma c =
+  let rec whrec x = match EConstr.kind sigma x with
+    | Cast (c, _, _) -> whrec c
+    | Lambda (_, _, c) ->
+      let (f, cl) = decompose_app_vect sigma (whrec c) in
+      let napp = Array.length cl in
+      if napp > 0 then
+        let x' = whrec (Array.last cl) in
+        match EConstr.kind sigma x' with
+        | Rel 1 ->
+          let lc = Array.sub cl 0 (napp-1) in
+          let u = mkApp (f, lc) in
+          if noccurn sigma 1 u then pop u else x
+        | _ -> x
+      else x
+    | Meta ev ->
+      (match safe_meta_value sigma ev with
+        Some c -> whrec c
+      | None -> x)
+    | App _ | Case _ | Fix _ | Construct _ | CoFix _ | Evar _ | Rel _ | Var _ | Sort _ | Prod _
+    | LetIn _ | Const _  | Ind _ | Proj _ | Int _ | Float _ | Array _ -> x
+  in
+  whrec c
 
 (* 5. Zeta Reduction Functions *)
 
@@ -995,18 +985,16 @@ let nf_evar = Evarutil.nf_evar
    a [nf_evar] here *)
 let clos_norm_flags flgs env sigma t =
   try
-    let evars ev = safe_evar_value sigma ev in
     EConstr.of_constr (CClosure.norm_val
-      (CClosure.create_clos_infos ~univs:(Evd.universes sigma) ~evars flgs env)
+      (Evarutil.create_clos_infos env sigma flgs)
       (CClosure.create_tab ())
       (CClosure.inject (EConstr.Unsafe.to_constr t)))
   with e when is_anomaly e -> user_err Pp.(str "Tried to normalize ill-typed term")
 
 let clos_whd_flags flgs env sigma t =
   try
-    let evars ev = safe_evar_value sigma ev in
     EConstr.of_constr (CClosure.whd_val
-      (CClosure.create_clos_infos ~univs:(Evd.universes sigma) ~evars flgs env)
+      (Evarutil.create_clos_infos env sigma flgs)
       (CClosure.create_tab ())
       (CClosure.inject (EConstr.Unsafe.to_constr t)))
   with e when is_anomaly e -> user_err Pp.(str "Tried to normalize ill-typed term")
@@ -1030,7 +1018,7 @@ let is_transparent e k =
 
 (* Conversion utility functions *)
 
-type conversion_test = Constraint.t -> Constraint.t
+type conversion_test = Constraints.t -> Constraints.t
 
 let pb_is_equal pb = pb == Reduction.CONV
 
@@ -1071,7 +1059,7 @@ let f_conv_leq ?l2r ?reds env ?evars x y =
 
 let test_trans_conversion (f: constr Reduction.extended_conversion_function) reds env sigma x y =
   try
-    let evars ev = safe_evar_value sigma ev in
+    let evars ev = existential_opt_value0 sigma ev in
     let env = Environ.set_universes (Evd.universes sigma) env in
     let _ = f ~reds env ~evars x y in
     true
@@ -1092,7 +1080,7 @@ let check_conv ?(pb=Reduction.CUMUL) ?(ts=TransparentState.full) env sigma x y =
     | Reduction.CUMUL -> f_conv_leq
   in
     let env = Environ.set_universes (Evd.universes sigma) env in
-    try f ~reds:ts env ~evars:(safe_evar_value sigma) x y; true
+    try f ~reds:ts env ~evars:(existential_opt_value0 sigma) x y; true
     with Reduction.NotConvertible -> false
     | Univ.UniverseInconsistency _ -> false
     | e ->
@@ -1156,7 +1144,7 @@ let infer_conv_gen conv_fun ?(catch_incon=true) ?(pb=Reduction.CUMUL)
     report_anomaly e
 
 let infer_conv = infer_conv_gen (fun pb ~l2r sigma ->
-      Reduction.generic_conv pb ~l2r (safe_evar_value sigma))
+      Reduction.generic_conv pb ~l2r (existential_opt_value0 sigma))
 
 (* This reference avoids always having to link C code with the kernel *)
 let vm_infer_conv = ref (infer_conv ~catch_incon:true ~ts:TransparentState.full)
@@ -1353,8 +1341,7 @@ let whd_betaiota_deltazeta_for_iota_state ts env sigma s =
   let env' = Environ.set_typing_flags { (Environ.typing_flags env) with Declarations.share_reduction = false } env in
   let whd_opt c =
     let open CClosure in
-    let evars ev = safe_evar_value sigma ev in
-    let infos = create_clos_infos ~evars all' env' in
+    let infos = Evarutil.create_clos_infos env' sigma all' in
     let tab = create_tab () in
     let c = inject (EConstr.Unsafe.to_constr (Stack.zip sigma c)) in
     let (c, stk) = whd_stack infos tab c [] in

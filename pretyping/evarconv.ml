@@ -230,7 +230,7 @@ let occur_rigidly flags env evd (evk,_) t =
 let check_conv_record env sigma (t1,sk1) (t2,sk2) =
   let open ValuePattern in
   let (proji, u), arg = Termops.global_app_of_constr sigma t1 in
-  let t2, sk2' = decompose_app_vect sigma (shrink_eta env t2) in
+  let t2, sk2' = decompose_app_vect sigma (shrink_eta sigma t2) in
   let sk2 = Stack.append_app sk2' sk2 in
   let (sigma, solution), sk2_effective =
     let t2 =
@@ -459,7 +459,7 @@ let compare_cumulative_instances evd variances u u' =
 
 let compare_heads env evd ~nargs term term' =
     let check_strict evd u u' =
-      let cstrs = Univ.enforce_eq_instances u u' Univ.Constraint.empty in
+      let cstrs = Univ.enforce_eq_instances u u' Univ.Constraints.empty in
       try Success (Evd.add_constraints evd cstrs)
       with Univ.UniverseInconsistency p -> UnifFailure (evd, UnifUnivInconsistency p)
     in
@@ -1672,7 +1672,7 @@ let apply_conversion_problem_heuristic flags env evd with_ho pbty t1 t2 =
                  (evar_define evar_unify flags ~choose:true)
                  evar_unify flags env evd
                  (position_problem true pbty) ev1 ev2)
-      with IllTypedInstance (env,t,u) ->
+      with IllTypedInstance (env,evd,t,u) ->
             UnifFailure (evd,InstanceNotSameType (evk1,env,t,u)))
   | Evar ev1,_ when is_evar_allowed flags (fst ev1) && Array.length l1 <= Array.length l2 ->
       (* On "?n t1 .. tn = u u1 .. u(n+p)", try first-order unification *)

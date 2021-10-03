@@ -24,7 +24,7 @@ RUN apt-get update -qq && apt-get install --no-install-recommends -y -qq \
         texlive-science tipa
 
 # More dependencies of the sphinx doc, pytest for coqtail
-RUN pip3 install docutils==0.16 sphinx==2.3.1 sphinx_rtd_theme==0.4.3 \
+RUN pip3 install docutils==0.16 sphinx==3.0.2 sphinx_rtd_theme==0.4.3 \
         antlr4-python3-runtime==4.7.1 sphinxcontrib-bibtex==0.4.2 \
         pytest==5.4.3
 
@@ -43,8 +43,8 @@ ENV COMPILER="4.05.0"
 
 # Common OPAM packages
 ENV BASE_OPAM="zarith.1.10 ocamlfind.1.8.1 ounit2.2.2.3 odoc.1.5.2" \
-    CI_OPAM="ocamlgraph.1.8.8 yojson.1.7.0" \
-    BASE_ONLY_OPAM="dune.2.7.1 elpi.1.13.5"
+    CI_OPAM="ocamlgraph.1.8.8 yojson.1.7.0 cppo.1.6.8" \
+    BASE_ONLY_OPAM="dune.2.7.1 elpi.1.13.6 stdlib-shims.0.1.0"
 
 # BASE switch; CI_OPAM contains Coq's CI dependencies.
 ENV COQIDE_OPAM="cairo2.0.6.1 lablgtk3-sourceview3.3.1.0"

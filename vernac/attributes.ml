@@ -155,44 +155,10 @@ let bool_attribute ~name : bool option attribute =
   let values = ["yes", true; "no", false] in
   key_value_attribute ~key:name ~default:true ~values
 
-let legacy_bool_attribute ~name ~on ~off : bool option attribute =
-  attribute_of_list
-    [(on, single_key_parser ~name ~key:on true);
-     (off, single_key_parser ~name ~key:off false)]
-
-(* important note: we use on as the default for the new bool_attribute ! *)
-let deprecated_bool_attribute_warning =
-  CWarnings.create
-    ~name:"deprecated-attribute-syntax"
-    ~category:"parsing"
-    ~default:CWarnings.Enabled
-    (fun name ->
-       Pp.(str "Syntax for switching off boolean attributes has been updated, use " ++ str name ++ str "=no instead."))
-
-let deprecated_bool_attribute ~name ~on ~off : bool option attribute =
-  bool_attribute ~name:on ++ legacy_bool_attribute ~name ~on ~off |> map (function
-      | None, None ->
-        None
-      | None, Some v ->
-        deprecated_bool_attribute_warning name;
-        Some v
-      | Some v, None -> Some v
-      | Some v1, Some v2 ->
-        CErrors.user_err
-          Pp.(str "attribute " ++ str name ++
-              str ": cannot specify legacy and modern syntax at the same time.")
-    )
-
 (* Variant of the [bool] attribute with only two values (bool has three). *)
 let get_bool_value ~key ~default =
   function
   | VernacFlagEmpty -> default
-  | VernacFlagList [ "true", VernacFlagEmpty ] ->
-    deprecated_bool_attribute_warning key;
-    true
-  | VernacFlagList [ "false", VernacFlagEmpty ] ->
-    deprecated_bool_attribute_warning key;
-    false
   | VernacFlagLeaf (FlagIdent "yes") ->
     true
   | VernacFlagLeaf (FlagIdent "no") ->
@@ -258,6 +224,19 @@ let option_locality =
   | None -> return Goptions.OptDefault
   | Some l -> return l
 
+let hint_locality ~default =
+  let open Hints in
+  let name = "Locality" in
+  attribute_of_list [
+    ("local", single_key_parser ~name ~key:"local" Local)
+  ; ("global", single_key_parser ~name ~key:"global" SuperGlobal)
+  ; ("export", single_key_parser ~name ~key:"export" Export)
+  ] >>= function
+  | Some v -> return v
+  | None -> let v = default () in return v
+
+let really_hint_locality = hint_locality ~default:Hints.default_hint_locality
+
 (* locality is supposed to be true when local, false when global *)
 let locality =
   let locality_to_bool =
@@ -288,21 +267,14 @@ let is_universe_polymorphism =
   in
   fun () -> !b
 
-let polymorphic_base =
-  deprecated_bool_attribute
-    ~name:"Polymorphism"
-    ~on:"polymorphic" ~off:"monomorphic" >>= function
+let polymorphic =
+  qualify_attribute ukey (bool_attribute ~name:"polymorphic") >>= function
   | Some b -> return b
   | None -> return (is_universe_polymorphism())
 
 let template =
   qualify_attribute ukey
-    (deprecated_bool_attribute
-       ~name:"Template"
-       ~on:"template" ~off:"notemplate")
-
-let polymorphic =
-  qualify_attribute ukey polymorphic_base
+    (bool_attribute ~name:"template")
 
 let deprecation_parser : Deprecation.t key_parser = fun orig args ->
   assert_once ~name:"deprecation" orig;

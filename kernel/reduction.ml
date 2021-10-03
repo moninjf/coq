@@ -219,7 +219,7 @@ type 'a universe_state = 'a * 'a universe_compare
 
 type ('a,'b) generic_conversion_function = env -> 'b universe_state -> 'a -> 'a -> 'b
 
-type 'a infer_conversion_function = env -> 'a -> 'a -> Univ.Constraint.t
+type 'a infer_conversion_function = env -> 'a -> 'a -> Univ.Constraints.t
 
 let sort_cmp_universes env pb s0 s1 (u, check) =
   (check.compare_sorts env pb s0 s1 u, check)
@@ -237,9 +237,9 @@ let convert_instances_cumul pb var u u' (s, check) =
 let get_cumulativity_constraints cv_pb variance u u' =
   match cv_pb with
   | CONV ->
-    Univ.enforce_eq_variance_instances variance u u' Univ.Constraint.empty
+    Univ.enforce_eq_variance_instances variance u u' Univ.Constraints.empty
   | CUMUL ->
-    Univ.enforce_leq_variance_instances variance u u' Univ.Constraint.empty
+    Univ.enforce_leq_variance_instances variance u u' Univ.Constraints.empty
 
 let inductive_cumulativity_arguments (mind,ind) =
   mind.Declarations.mind_nparams +
@@ -296,7 +296,9 @@ let conv_table_key infos ~nargs k1 k2 cuniv =
   | _ -> raise NotConvertible
 
 let unfold_ref_with_args infos tab fl v =
-  match unfold_reference infos tab fl with
+  let env = info_env infos in
+  let flags = RedFlags.red_transparent (info_flags infos) in
+  match unfold_reference env flags tab fl with
   | Def def -> Some (def, v)
   | Primitive op when check_native_args op v ->
     let c = match fl with ConstKey c -> c | _ -> assert false in
@@ -331,7 +333,7 @@ let is_irrelevant infos lft c =
   try Relevanceops.relevance_of_fterm env (info_relevances infos.cnv_inf) lft c == Sorts.Irrelevant with _ -> false
 
 let identity_of_ctx (ctx:Constr.rel_context) =
-  Context.Rel.to_extended_vect mkRel 0 ctx
+  Context.Rel.instance mkRel 0 ctx
 
 (* ind -> fun args => ind args *)
 let eta_expand_ind env (ind,u as pind) =
@@ -352,28 +354,7 @@ let eta_expand_constructor env ((ind,ctor),u as pctor) =
   let c = Term.it_mkLambda_or_LetIn c ctx in
   inject c
 
-let inductive_subst (mind, _) mib u pms =
-  let open Context.Rel.Declaration in
-  let ntypes = mib.mind_ntypes in
-  let rec self i accu =
-    if Int.equal i ntypes then accu
-    else self (i + 1) (subs_cons (inject (mkIndU ((mind, i), u))) accu)
-  in
-  let accu = self 0 (subs_id 0) in
-  let rec mk_pms pms ctx = match ctx, pms with
-  | [], [] -> accu
-  | LocalAssum _ :: ctx, c :: pms ->
-    let subs = mk_pms pms ctx in
-    subs_cons c subs
-  | LocalDef (_, c, _) :: ctx, pms ->
-    let c = Vars.subst_instance_constr u c in
-    let subs = mk_pms pms ctx in
-    subs_cons (mk_clos subs c) subs
-  | LocalAssum _ :: _, [] | [], _ :: _ -> assert false
-  in
-  mk_pms (List.rev pms) mib.mind_params_ctxt
-
-let esubst_of_rel_context_instance ctx u args e =
+let esubst_of_rel_context_instance_list ctx u args e =
   let open Context.Rel.Declaration in
   let rec aux lft e args ctx = match ctx with
   | [] -> lft, e
@@ -705,11 +686,11 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
         let nargs = inductive_cumulativity_arguments ind in
         convert_inductives CONV ind nargs u1 u2 cuniv
       in
-      let pms1 = Array.map_to_list (fun c -> mk_clos e1 c) pms1 in
-      let pms2 = Array.map_to_list (fun c -> mk_clos e2 c) pms2 in
-      let cuniv = List.fold_right2 fold pms1 pms2 cuniv in
-      let cuniv = convert_return_clause ci1.ci_ind mind mip l2r infos e1 e2 el1 el2 u1 u2 pms1 pms2 p1 p2 cuniv in
-      convert_branches ci1.ci_ind mind mip l2r infos e1 e2 el1 el2 u1 u2 pms1 pms2 br1 br2 cuniv
+      let pms1 = mk_clos_vect e1 pms1 in
+      let pms2 = mk_clos_vect e2 pms2 in
+      let cuniv = Array.fold_right2 fold pms1 pms2 cuniv in
+      let cuniv = convert_return_clause mind mip l2r infos e1 e2 el1 el2 u1 u2 pms1 pms2 p1 p2 cuniv in
+      convert_branches mind mip l2r infos e1 e2 el1 el2 u1 u2 pms1 pms2 br1 br2 cuniv
 
     | FArray (u1,t1,ty1), FArray (u2,t2,ty2) ->
       let len = Parray.length_int t1 in
@@ -760,12 +741,12 @@ and convert_stacks l2r infos lft1 lft2 stk1 stk2 cuniv =
                     | None -> convert_instances ~flex:false u1 u2 cu
                     | Some variances -> convert_instances_cumul CONV variances u1 u2 cu
                 in
-                let pms1 = Array.map_to_list (fun c -> mk_clos e1 c) pms1 in
-                let pms2 = Array.map_to_list (fun c -> mk_clos e2 c) pms2 in
+                let pms1 = mk_clos_vect e1 pms1 in
+                let pms2 = mk_clos_vect e2 pms2 in
                 let fold_params c1 c2 accu = f (l1, c1) (l2, c2) accu in
-                let cu = List.fold_right2 fold_params pms1 pms2 cu in
-                let cu = convert_return_clause ci1.ci_ind mind mip l2r infos e1 e2 l1 l2 u1 u2 pms1 pms2 p1 p2 cu in
-                convert_branches ci1.ci_ind mind mip l2r infos e1 e2 l1 l2 u1 u2 pms1 pms2 br1 br2 cu
+                let cu = Array.fold_right2 fold_params pms1 pms2 cu in
+                let cu = convert_return_clause mind mip l2r infos e1 e2 l1 l2 u1 u2 pms1 pms2 p1 p2 cu in
+                convert_branches mind mip l2r infos e1 e2 l1 l2 u1 u2 pms1 pms2 br1 br2 cu
             | (Zlprimitive(op1,_,rargs1,kargs1),Zlprimitive(op2,_,rargs2,kargs2)) ->
               if not (CPrimitives.equal op1 op2) then raise NotConvertible else
                 let cu2 = List.fold_right2 f rargs1 rargs2 cu1 in
@@ -799,8 +780,8 @@ and convert_under_context l2r infos e1 e2 lft1 lft2 ctx (nas1, c1) (nas2, c2) cu
     let e2 = subs_liftn n e2 in
     (n, e1, e2)
   | Some (ctx, u1, u2, args1, args2) ->
-    let n1, e1 = esubst_of_rel_context_instance ctx u1 args1 e1 in
-    let n2, e2 = esubst_of_rel_context_instance ctx u2 args2 e2 in
+    let n1, e1 = esubst_of_rel_context_instance_list ctx u1 args1 e1 in
+    let n2, e2 = esubst_of_rel_context_instance_list ctx u2 args2 e2 in
     let () = assert (Int.equal n1 n2) in
     n1, e1, e2
   in
@@ -809,13 +790,13 @@ and convert_under_context l2r infos e1 e2 lft1 lft2 ctx (nas1, c1) (nas2, c2) cu
   let infos = push_relevances infos nas1 in
   ccnv CONV l2r infos lft1 lft2 (mk_clos e1 c1) (mk_clos e2 c2) cu
 
-and convert_return_clause ind mib mip l2r infos e1 e2 l1 l2 u1 u2 pms1 pms2 p1 p2 cu =
+and convert_return_clause mib mip l2r infos e1 e2 l1 l2 u1 u2 pms1 pms2 p1 p2 cu =
   let ctx =
     if Int.equal mip.mind_nrealargs mip.mind_nrealdecls then None
     else
       let ctx, _ = List.chop mip.mind_nrealdecls mip.mind_arity_ctxt in
-      let pms1 = inductive_subst ind mib u1 pms1 in
-      let pms2 = inductive_subst ind mib u1 pms2 in
+      let pms1 = inductive_subst mib u1 pms1 in
+      let pms2 = inductive_subst mib u1 pms2 in
       let open Context.Rel.Declaration in
       (* Add the inductive binder *)
       let dummy = mkProp in
@@ -824,14 +805,14 @@ and convert_return_clause ind mib mip l2r infos e1 e2 l1 l2 u1 u2 pms1 pms2 p1 p
   in
   convert_under_context l2r infos e1 e2 l1 l2 ctx p1 p2 cu
 
-and convert_branches ind mib mip l2r infos e1 e2 lft1 lft2 u1 u2 pms1 pms2 br1 br2 cuniv =
+and convert_branches mib mip l2r infos e1 e2 lft1 lft2 u1 u2 pms1 pms2 br1 br2 cuniv =
   let fold i (ctx, _) cuniv =
     let ctx =
       if Int.equal mip.mind_consnrealdecls.(i) mip.mind_consnrealargs.(i) then None
       else
         let ctx, _ = List.chop mip.mind_consnrealdecls.(i) ctx in
-        let pms1 = inductive_subst ind mib u1 pms1 in
-        let pms2 = inductive_subst ind mib u2 pms2 in
+        let pms1 = inductive_subst mib u1 pms1 in
+        let pms2 = inductive_subst mib u2 pms2 in
         Some (ctx, u1, u2, pms1, pms2)
     in
     let c1 = br1.(i) in
@@ -912,7 +893,7 @@ let infer_leq (univs, cstrs as cuniv) u u' =
   if UGraph.check_leq univs u u' then cuniv
   else
     let cstrs', _ = UGraph.enforce_leq_alg u u' univs in
-      univs, Univ.Constraint.union cstrs cstrs'
+      univs, Univ.Constraints.union cstrs cstrs'
 
 let infer_cmp_universes _env pb s0 s1 univs =
   let u0 = Sorts.univ_of_sort s0
@@ -931,9 +912,9 @@ let infer_convert_instances ~flex u u' (univs,cstrs) =
 
 let infer_inductive_instances cv_pb variance u1 u2 (univs,csts') =
   let csts = get_cumulativity_constraints cv_pb variance u1 u2 in
-  (univs, Univ.Constraint.union csts csts')
+  (univs, Univ.Constraints.union csts csts')
 
-let inferred_universes : (UGraph.t * Univ.Constraint.t) universe_compare =
+let inferred_universes : (UGraph.t * Univ.Constraints.t) universe_compare =
   { compare_sorts = infer_cmp_universes;
     compare_instances = infer_convert_instances;
     compare_cumul_instances = infer_inductive_instances; }
@@ -966,7 +947,7 @@ let infer_conv_universes cv_pb ?(l2r=false) ?(evars=fun _ -> None) ?(ts=Transpar
   in
     if b then cstrs
     else
-      let state = ((univs, Univ.Constraint.empty), inferred_universes) in
+      let state = ((univs, Univ.Constraints.empty), inferred_universes) in
       let ((_,cstrs), _) = clos_gen_conv ts cv_pb l2r evars env univs state t1 t2 in
         cstrs
 

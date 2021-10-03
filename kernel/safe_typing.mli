@@ -56,7 +56,6 @@ val concat_private : private_constants -> private_constants -> private_constants
 (** [concat_private e1 e2] adds the constants of [e1] to [e2], i.e. constants in
     [e1] must be more recent than those of [e2]. *)
 
-val mk_pure_proof : Constr.constr -> private_constants Entries.proof_output
 val inline_private_constants :
   Environ.env -> private_constants Entries.proof_output -> Constr.constr Univ.in_universe_context_set
 
@@ -98,7 +97,7 @@ val add_constant :
 
 (** Similar to add_constant but also returns a certificate *)
 val add_private_constant :
-  Label.t -> side_effect_declaration -> (Constant.t * private_constants) safe_transformer
+  Label.t -> Univ.ContextSet.t -> side_effect_declaration -> (Constant.t * private_constants) safe_transformer
 
 (** Adding an inductive type *)
 
@@ -122,7 +121,7 @@ val push_context_set :
   strict:bool -> Univ.ContextSet.t -> safe_transformer0
 
 val add_constraints :
-  Univ.Constraint.t -> safe_transformer0
+  Univ.Constraints.t -> safe_transformer0
 
 (* (\** Generator of universes *\) *)
 (* val next_universe : int safe_transformer *)
@@ -155,7 +154,7 @@ val push_named_def :
   Id.t * Entries.section_def_entry -> safe_transformer0
 
 (** Add local universes to a polymorphic section *)
-val push_section_context : (Name.t array * Univ.UContext.t) -> safe_transformer0
+val push_section_context : Univ.UContext.t -> safe_transformer0
 
 (** {6 Interactive module functions } *)
 

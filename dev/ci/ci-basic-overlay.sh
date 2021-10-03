@@ -136,8 +136,7 @@ project compcert "https://github.com/AbsInt/CompCert" "master"
 ########################################################################
 # VST
 ########################################################################
-# todo: 2021 03 11: switch back to master once vst merges the compcert3.9 branch
-project vst "https://github.com/PrincetonUniversity/VST" "compcert3.9"
+project vst "https://github.com/PrincetonUniversity/VST" "master"
 
 ########################################################################
 # cross-crypto
@@ -314,3 +313,8 @@ project deriving "https://github.com/arthuraa/deriving" "master"
 # VsCoq
 ########################################################################
 project vscoq "https://github.com/maximedenes/vscoq" document-manager
+
+########################################################################
+# category-theory
+########################################################################
+project category_theory "https://github.com/jwiegley/category-theory" "master"

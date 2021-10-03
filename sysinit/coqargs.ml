@@ -271,27 +271,15 @@ let parse_args ~usage ~init arglist : t * string list =
     let noval = begin match opt with
 
     (* Complex options with many args *)
-    |"-I"|"-include" ->
-      begin match rem with
-      | d :: rem ->
-        args := rem;
-        add_ml_include oval d
-      | [] -> error_missing_arg opt
-      end
+    |"-I"|"-include" -> add_ml_include oval (next())
     |"-Q" ->
-      begin match rem with
-      | d :: p :: rem ->
-        args := rem;
-        add_vo_include oval d p false
-      | _ -> error_missing_arg opt
-      end
+      let d = next () in
+      let p = next () in
+      add_vo_include oval d p false
     |"-R" ->
-      begin match rem with
-      | d :: p :: rem ->
-        args := rem;
-        add_vo_include oval d p true
-      | _ -> error_missing_arg opt
-      end
+      let d = next () in
+      let p = next () in
+      add_vo_include oval d p true
 
     (* Options with one arg *)
     |"-coqlib" ->
@@ -452,8 +440,8 @@ let build_load_path opts =
   let ml_path, vo_path =
     if opts.pre.boot then [],[]
     else
-      let coqlib = Envars.coqlib () in
-      Coqloadpath.init_load_path ~coqlib in
+      let coqenv = Boot.Env.init () in
+      Coqloadpath.init_load_path ~coqenv in
   ml_path @ opts.pre.ml_includes ,
   vo_path @ opts.pre.vo_includes
 

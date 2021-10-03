@@ -1,3 +1,60 @@
+## Changes between Coq 8.14 and Coq 8.15
+
+### Internal representation of the type of constructors
+
+The type of constructors in fields `mind_user_lc` and `mind_nf_lc` of
+an inductive packet (see `declarations.ml`) now directly refer to the
+inductive type rather than to a `Rel` poimting in a context made of the
+declaration of the inductive types of the block. Thus, instead of `Rel
+n`, one finds `Ind((mind,ntypes-n),u)` where `ntypes` is the number of
+types in the block and `u` is the canonical instance of polymoprhic
+universes (i.e. `Level.Var 0` ... `Level.Var (nbuniv-1)`).
+
+In general, code can be adapted by:
+- either removing a substitution `Rel`->`Ind` if such substitution was applied
+- or inserting a call to
+  `Inductive.abstract_constructor_type_relatively_to_inductive_types_context`
+  to restore `Rel`s in place of `Ind`s if `Rel`s were expected.
+
+### Universes
+
+- Type `Univ.UContext` now embeds universe user names, generally
+  resulting in more concise code.
+
+- Renaming `Univ.Constraint` into `Univ.Constraints`
+
+- Renaming `LSet` into `Level.Set` and `LMap` into `Level.Map`
+
+### Concrete syntax
+
+- Explicit nodes `CProj` and `GProj` have been added for the syntax of
+  projections `t.(f)` in `constr_expr` and `glob_constr`, while they
+  were previously encoded in the `CApp` and `GApp` nodes. There may be
+  a need for adding a new case in pattern-matching. The types of `CApp`
+  and `CAppExpl` have been simplified accordingly.
+
+### Functions manipulating contexts
+
+A few functions in Vars, Context, Termops, EConstr have moved. The
+deprecation warning tells what to do.
+
+### Build system and infrastructure
+
+- The Windows installer CI build has been moved from the custom
+  workers based on Inria cloud to a standard Github Action, see
+  https://github.com/coq/coq/pull/12425 .
+
+  Fixes https://github.com/coq/coq/issues/6807
+  https://github.com/coq/coq/issues/7428
+  https://github.com/coq/coq/issues/8046
+  https://github.com/coq/coq/issues/8622
+  https://github.com/coq/coq/issues/9401
+  https://github.com/coq/coq/issues/11073 .
+
+- Location of Coq's runtime environment and files is now handled by a
+  new library, `coq-core.boot`, which provides a more uniform and
+  centralized API to locate files.
+
 ## Changes between Coq 8.13 and Coq 8.14
 
 ### Build system and library infrastructure

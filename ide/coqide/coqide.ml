@@ -995,9 +995,9 @@ let emit_to_focus window sgn =
 
 let build_ui () =
   let w = GWindow.window
-    ~wmclass:("CoqIde","CoqIde")
+    ~wmclass:("CoqIDE","CoqIDE")
     ~width:window_width#get ~height:window_height#get
-    ~title:"CoqIde" ()
+    ~title:"CoqIDE" ()
   in
   let () =
     try w#set_icon (Some (GdkPixbuf.from_file (MiscMenu.coq_icon ())))
@@ -1250,11 +1250,17 @@ let build_ui () =
   w#add_accel_group Coqide_ui.ui_m#get_accel_group ;
   GtkMain.Rc.parse_string "gtk-can-change-accels = 1";
   if Coq_config.gtk_platform <> `QUARTZ
-  then vbox#pack (Coqide_ui.ui_m#get_widget "/CoqIde MenuBar");
+  then vbox#pack (Coqide_ui.ui_m#get_widget "/CoqIDE MenuBar");
+
+  (* Connect some specific actions *)
+  let unicode = Coqide_ui.ui_m#get_action "ui/CoqIDE MenuBar/Tools/LaTeX-to-unicode" in
+  let callback b = unicode#set_sensitive b in
+  let () = callback unicode_binding#get in
+  let _ = unicode_binding#connect#changed ~callback in
 
   (* Toolbar *)
   let tbar = GtkButton.Toolbar.cast
-      ((Coqide_ui.ui_m#get_widget "/CoqIde ToolBar")#as_widget)
+      ((Coqide_ui.ui_m#get_widget "/CoqIDE ToolBar")#as_widget)
   in
   let () = GtkButton.Toolbar.set
     ~orientation:`HORIZONTAL ~style:`ICONS tbar

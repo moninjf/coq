@@ -47,7 +47,7 @@ val sprop_allowed : unit -> bool
 
 val push_named_assum : (Id.t * Constr.types) -> unit
 val push_named_def   : (Id.t * Entries.section_def_entry) -> unit
-val push_section_context : (Name.t array * Univ.UContext.t) -> unit
+val push_section_context : Univ.UContext.t -> unit
 
 val export_private_constants :
   Safe_typing.private_constants ->
@@ -57,13 +57,13 @@ val add_constant :
   ?typing_flags:typing_flags ->
   Id.t -> Safe_typing.global_declaration -> Constant.t
 val add_private_constant :
-  Id.t -> Safe_typing.side_effect_declaration -> Constant.t * Safe_typing.private_constants
+  Id.t -> Univ.ContextSet.t -> Safe_typing.side_effect_declaration -> Constant.t * Safe_typing.private_constants
 val add_mind :
   ?typing_flags:typing_flags ->
   Id.t -> Entries.mutual_inductive_entry -> MutInd.t
 
 (** Extra universe constraints *)
-val add_constraints : Univ.Constraint.t -> unit
+val add_constraints : Univ.Constraints.t -> unit
 
 val push_context_set : strict:bool -> Univ.ContextSet.t -> unit
 
@@ -123,7 +123,7 @@ val mind_of_delta_kn : KerName.t -> MutInd.t
 val opaque_tables : unit -> Opaqueproof.opaquetab
 
 val body_of_constant : cooking_info Opaqueproof.indirect_accessor -> Constant.t ->
-  (Constr.constr * unit Opaqueproof.delayed_universes * Univ.AUContext.t) option
+  (Constr.constr * unit Opaqueproof.delayed_universes * Univ.AbstractContext.t) option
 (** Returns the body of the constant if it has any, and the polymorphic context
     it lives in. For monomorphic constant, the latter is empty, and for
     polymorphic constants, the term contains De Bruijn universe variables that
@@ -131,7 +131,7 @@ val body_of_constant : cooking_info Opaqueproof.indirect_accessor -> Constant.t 
 
 val body_of_constant_body : cooking_info Opaqueproof.indirect_accessor ->
   constant_body ->
-    (Constr.constr * unit Opaqueproof.delayed_universes * Univ.AUContext.t) option
+    (Constr.constr * unit Opaqueproof.delayed_universes * Univ.AbstractContext.t) option
 (** Same as {!body_of_constant} but on {!constant_body}. *)
 
 (** {6 Compiled libraries } *)

@@ -10,53 +10,26 @@
 
 open Vernacexpr
 
-(* XXX Should move to a common library *)
-let debug = false
-let vernac_pperr_endline pp =
-  if debug then Format.eprintf "@[%a@]@\n%!" Pp.pp_with (pp ()) else ()
+let vernac_pperr_endline = CDebug.create ~name:"vernacinterp" ()
 
-(* EJGA: We may remove this, only used twice below *)
-let vernac_require_open_lemma ~stack f =
-  match stack with
-  | Some stack -> f stack
-  | None ->
-    CErrors.user_err (Pp.str "Command not supported (No proof-editing in progress)")
-
-let interp_typed_vernac c ~pm ~stack =
+let interp_typed_vernac (Vernacextend.TypedVernac { inprog; outprog; inproof; outproof; run })
+    ~pm ~stack =
   let open Vernacextend in
-  match c with
-  | VtDefault f -> f (); stack, pm
-  | VtNoProof f ->
-    if Option.has_some stack then
-      CErrors.user_err (Pp.str "Command not supported (Open proofs remain)");
-    let () = f () in
-    stack, pm
-  | VtCloseProof f ->
-    vernac_require_open_lemma ~stack (fun stack ->
-        let lemma, stack = Vernacstate.LemmaStack.pop stack in
-        let pm = f ~lemma ~pm in
-        stack, pm)
-  | VtOpenProof f ->
-    Some (Vernacstate.LemmaStack.push stack (f ())), pm
-  | VtModifyProof f ->
-    Option.map (Vernacstate.LemmaStack.map_top ~f:(fun pstate -> f ~pstate)) stack, pm
-  | VtReadProofOpt f ->
-    let pstate = Option.map (Vernacstate.LemmaStack.with_top ~f:(fun x -> x)) stack in
-    f ~pstate;
-    stack, pm
-  | VtReadProof f ->
-    vernac_require_open_lemma ~stack
-      (Vernacstate.LemmaStack.with_top ~f:(fun pstate -> f ~pstate));
-    stack, pm
-  | VtReadProgram f -> f ~stack ~pm; stack, pm
-  | VtModifyProgram f ->
-    let pm = f ~pm in stack, pm
-  | VtDeclareProgram f ->
-    let lemma = f ~pm in
-    Some (Vernacstate.LemmaStack.push stack lemma), pm
-  | VtOpenProofProgram f ->
-    let pm, lemma = f ~pm in
-    Some (Vernacstate.LemmaStack.push stack lemma), pm
+  let module LStack = Vernacstate.LemmaStack in
+  let proof = Option.map LStack.get_top stack in
+  let pm', proof' = run
+      ~pm:(InProg.cast (NeList.head pm) inprog)
+      ~proof:(InProof.cast proof inproof)
+  in
+  let pm = OutProg.cast pm' outprog pm in
+  let stack = let open OutProof in match stack, OutProof.cast proof' outproof with
+    | stack, Ignored -> stack
+    | Some stack, Closed -> snd (LStack.pop stack)
+    | None, Closed -> assert false
+    | Some stack, Open proof -> Some (LStack.map_top ~f:(fun _ -> proof) stack)
+    | None, Open proof -> Some (LStack.push None proof)
+  in
+  stack, pm
 
 (* Default proof mode, to be set at the beginning of proofs for
    programs that cannot be statically classified. *)
@@ -114,6 +87,13 @@ let with_fail ~st f =
     if not !Flags.quiet || !test_mode
     then Feedback.msg_notice Pp.(str "The command has indeed failed with message:" ++ fnl () ++ msg)
 
+let with_succeed ~st f =
+  let () = ignore (f ()) in
+  Vernacstate.invalidate_cache ();
+  Vernacstate.unfreeze_interp_state st;
+  if not !Flags.quiet
+  then Feedback.msg_notice Pp.(str "The command has succeeded and its effects have been reverted.")
+
 let locate_if_not_already ?loc (e, info) =
   match Loc.get_loc info with
   | None   -> (e, Option.cata (Loc.add_loc info) info loc)
@@ -134,10 +114,13 @@ let mk_time_header =
   fun vernac -> Lazy.from_fun (fun () -> pr_time_header vernac)
 
 let interp_control_flag ~time_header (f : control_flag) ~st
-    (fn : st:Vernacstate.t -> Vernacstate.LemmaStack.t option * Declare.OblState.t) =
+    (fn : st:Vernacstate.t -> Vernacstate.LemmaStack.t option * Declare.OblState.t NeList.t) =
   match f with
   | ControlFail ->
     with_fail ~st (fun () -> fn ~st);
+    st.Vernacstate.lemmas, st.Vernacstate.program
+  | ControlSucceed ->
+    with_succeed ~st (fun () -> fn ~st);
     st.Vernacstate.lemmas, st.Vernacstate.program
   | ControlTimeout timeout ->
     vernac_timeout ~timeout (fun () -> fn ~st) ()
@@ -152,8 +135,6 @@ let interp_control_flag ~time_header (f : control_flag) ~st
  * still parsed as the obsolete_locality grammar entry for retrocompatibility.
  * loc is the Loc.t of the vernacular command being interpreted. *)
 let rec interp_expr ?loc ~atts ~st c =
-  let stack = st.Vernacstate.lemmas in
-  let program = st.Vernacstate.program in
   vernac_pperr_endline Pp.(fun () -> str "interpreting: " ++ Ppvernac.pr_vernac_expr c);
   match c with
 
@@ -175,6 +156,8 @@ let rec interp_expr ?loc ~atts ~st c =
     vernac_load ~verbosely fname
   | v ->
     let fv = Vernacentries.translate_vernac ?loc ~atts v in
+    let stack = st.Vernacstate.lemmas in
+    let program = st.Vernacstate.program in
     interp_typed_vernac ~pm:program ~stack fv
 
 and vernac_load ~verbosely fname =
@@ -186,7 +169,8 @@ and vernac_load ~verbosely fname =
   let input =
     let longfname = Loadpath.locate_file fname in
     let in_chan = Util.open_utf8_file_in longfname in
-    Pcoq.Parsable.make ~loc:(Loc.(initial (InFile longfname))) (Stream.of_channel in_chan) in
+    Pcoq.Parsable.make ~loc:Loc.(initial (InFile { dirpath=None; file=longfname}))
+        (Stream.of_channel in_chan) in
   (* Parsing loop *)
   let v_mod = if verbosely then Flags.verbosely else Flags.silently in
   let parse_sentence proof_mode = Flags.with_option Flags.we_are_parsing
@@ -228,15 +212,16 @@ and interp_control ~st ({ CAst.v = cmd; loc } as vernac) =
 *)
 
 (* Interpreting a possibly delayed proof *)
-let interp_qed_delayed ~proof ~st pe : Vernacstate.LemmaStack.t option * Declare.OblState.t =
+let interp_qed_delayed ~proof ~st pe =
   let stack = st.Vernacstate.lemmas in
   let pm = st.Vernacstate.program in
   let stack = Option.cata (fun stack -> snd @@ Vernacstate.LemmaStack.pop stack) None stack in
-  let pm = match pe with
-    | Admitted ->
-      Declare.Proof.save_lemma_admitted_delayed ~pm ~proof
-    | Proved (_,idopt) ->
-      let pm, _ = Declare.Proof.save_lemma_proved_delayed ~pm ~proof ~idopt in
+  let pm = NeList.map_head (fun pm -> match pe with
+      | Admitted ->
+        Declare.Proof.save_lemma_admitted_delayed ~pm ~proof
+      | Proved (_,idopt) ->
+        let pm, _ = Declare.Proof.save_lemma_proved_delayed ~pm ~proof ~idopt in
+        pm)
       pm
   in
   stack, pm

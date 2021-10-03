@@ -27,7 +27,6 @@ open Tacinterp
 open Libobject
 open Printer
 open Declare
-open Entries
 open Ring_ast
 open Proofview.Notations
 
@@ -74,10 +73,9 @@ let lookup_map map =
     CErrors.user_err ~hdr:"lookup_map" (str"Map "++qs map++str"not found")
 
 let protect_red map env sigma c0 =
-  let evars ev = Evarutil.safe_evar_value sigma ev in
   let c = EConstr.Unsafe.to_constr c0 in
   let tab = create_tab () in
-  let infos = create_clos_infos ~univs:(Evd.universes sigma) ~evars all env in
+  let infos = Evarutil.create_clos_infos env sigma all in
   let map = lookup_map map sigma c0 in
   let rec eval n c = match Constr.kind c with
   | Prod (na, t, u) -> Constr.mkProd (na, eval n t, eval (n + 1) u)
@@ -149,7 +147,7 @@ let decl_constant name univs c =
   let univs = UState.restrict_universe_context ~lbound:(Global.universes_lbound ()) univs vars in
   let () = DeclareUctx.declare_universe_context ~poly:false univs in
   let types = (Typeops.infer (Global.env ()) c).uj_type in
-  let univs = Monomorphic_entry Univ.ContextSet.empty in
+  let univs = UState.Monomorphic_entry Univ.ContextSet.empty, UnivNames.empty_binders in
   mkConst(declare_constant ~name
             ~kind:Decls.(IsProof Lemma)
             (DefinitionEntry (definition_entry ~opaque:true ~types ~univs c)))
