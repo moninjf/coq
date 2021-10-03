@@ -289,7 +289,7 @@ let is_suffix l suf = match l with
 | _ :: l -> l == suf
 
 let is_subset (s1, cst1) (s2, cst2) =
-  Univ.LSet.subset s1 s2 && Univ.Constraint.subset cst1 cst2
+  Univ.Level.Set.subset s1 s2 && Univ.Constraints.subset cst1 cst2
 
 let check ~src ~dst =
   is_suffix dst.certif_struc src.certif_struc &&
@@ -303,6 +303,7 @@ type side_effect = {
   seff_certif : Certificate.t CEphemeron.key;
   seff_constant : Constant.t;
   seff_body : Constr.t Declarations.pconstant_body;
+  seff_univs : Univ.ContextSet.t;
 }
 (* Invariant: For any senv, if [Certificate.check senv seff_certif] then
   senv where univs := Certificate.universes seff_certif] +
@@ -367,11 +368,7 @@ let is_empty_private_constants c = SideEffects.is_empty c
 let concat_private = SideEffects.concat
 
 let universes_of_private eff =
-  let fold acc eff =
-    match eff.seff_body.const_universes with
-    | Monomorphic ctx -> Univ.ContextSet.union ctx acc
-    | Polymorphic _ -> acc
-  in
+  let fold acc eff = Univ.ContextSet.union eff.seff_univs acc in
   List.fold_left fold Univ.ContextSet.empty (side_effects_of_private_constants eff)
 
 let env_of_safe_env senv = senv.env
@@ -522,14 +519,14 @@ let push_named_assum (x,t) senv =
   let env'' = safe_push_named (LocalAssum (x,t)) senv.env in
   { senv with sections=Some sections; env = env'' }
 
-let push_section_context (nas, ctx) senv =
+let push_section_context uctx senv =
   let sections = get_section senv.sections in
-  let sections = Section.push_context (nas, ctx) sections in
+  let sections = Section.push_context uctx sections in
   let senv = { senv with sections=Some sections } in
-  let ctx = Univ.ContextSet.of_context ctx in
+  let ctx = Univ.ContextSet.of_context uctx in
   (* We check that the universes are fresh. FIXME: This should be done
      implicitly, but we have to work around the API. *)
-  let () = assert (Univ.LSet.for_all (fun u -> not (Univ.LSet.mem u (fst senv.univ))) (fst ctx)) in
+  let () = assert (Univ.Level.Set.for_all (fun u -> not (Univ.Level.Set.mem u (fst senv.univ))) (fst ctx)) in
   { senv with
     env = Environ.push_context_set ~strict:false ctx senv.env;
     univ = Univ.ContextSet.union ctx senv.univ }
@@ -549,26 +546,6 @@ let labels_of_mib mib =
   Array.iter visit_mip mib.mind_packets;
   get ()
 
-let globalize_constant_universes cb =
-  match cb.const_universes with
-  | Monomorphic cstrs ->
-    (* Constraints hidden in the opaque body are added by [add_constant_aux] *)
-    [cstrs]
-  | Polymorphic _ ->
-    []
-
-let globalize_mind_universes mb =
-  match mb.mind_universes with
-  | Monomorphic ctx ->
-    [ctx]
-  | Polymorphic _ -> []
-
-let constraints_of_sfb sfb =
-  match sfb with
-  | SFBconst cb -> globalize_constant_universes cb
-  | SFBmind mib -> globalize_mind_universes mib
-  | SFBmodtype _ | SFBmodule _ -> []
-
 let add_retroknowledge pttc senv =
   { senv with
     env = Primred.add_retroknowledge senv.env pttc;
@@ -583,7 +560,7 @@ type generic_name =
   | M (** name already known, cf the mod_mp field *)
   | MT (** name already known, cf the mod_mp field *)
 
-let add_field ?(is_include=false) ((l,sfb) as field) gn senv =
+let add_field ((l,sfb) as field) gn senv =
   let mlabs,olabs = match sfb with
     | SFBmind mib ->
       let l = labels_of_mib mib in
@@ -592,19 +569,6 @@ let add_field ?(is_include=false) ((l,sfb) as field) gn senv =
       check_objlabel l senv; (Label.Set.empty, Label.Set.singleton l)
     | SFBmodule _ | SFBmodtype _ ->
       check_modlabel l senv; (Label.Set.singleton l, Label.Set.empty)
-  in
-  let senv =
-    if is_include then
-      (* Universes and constraints were added when the included module
-         was defined eg in [Include F X.] (one of the trickier
-         versions of Include) the constraints on the fields are
-         exactly those of the fields of F which was defined
-         separately. *)
-      senv
-    else
-      (* Delayed constraints from opaque body are added by [add_constant_aux] *)
-      let cst = constraints_of_sfb sfb in
-      List.fold_left (fun senv cst -> push_context_set ~strict:true cst senv) senv cst
   in
   let env' = match sfb, gn with
     | SFBconst cb, C con -> Environ.add_constant con cb senv.env
@@ -656,40 +620,36 @@ let add_constant_aux senv (kn, cb) =
   in
   senv''
 
-let mk_pure_proof c = (c, Univ.ContextSet.empty), SideEffects.empty
-
 let inline_side_effects env body side_eff =
   let open Constr in
   (** First step: remove the constants that are still in the environment *)
   let filter e =
-    let cb = (e.seff_constant, e.seff_body) in
     if Environ.mem_constant e.seff_constant env then None
-    else Some (cb, e.seff_certif)
+    else Some e
   in
   (* CAVEAT: we assure that most recent effects come first *)
   let side_eff = List.map_filter filter (SideEffects.repr side_eff) in
-  let sigs = List.rev_map (fun (_, mb) -> mb) side_eff in
-  let side_eff = List.fold_left (fun accu (cb, _) -> cb :: accu) [] side_eff in
-  let side_eff = List.rev side_eff in
+  let sigs = List.rev_map (fun e -> e.seff_certif) side_eff in
   (** Most recent side-effects first in side_eff *)
   if List.is_empty side_eff then (body, Univ.ContextSet.empty, sigs, 0)
   else
     (** Second step: compute the lifts and substitutions to apply *)
     let cname c r = Context.make_annot (Name (Label.to_id (Constant.label c))) r in
-    let fold (subst, var, ctx, args) (c, cb) =
+    let fold (subst, var, ctx, args) { seff_constant = c; seff_body = cb; seff_univs = univs; _ } =
       let (b, opaque) = match cb.const_body with
       | Def b -> (b, false)
       | OpaqueDef b -> (b, true)
       | _ -> assert false
       in
       match cb.const_universes with
-      | Monomorphic univs ->
+      | Monomorphic ->
         (** Abstract over the term at the top of the proof *)
         let ty = cb.const_type in
         let subst = Cmap_env.add c (Inr var) subst in
         let ctx = Univ.ContextSet.union ctx univs in
         (subst, var + 1, ctx, (cname c cb.const_relevance, b, ty, opaque) :: args)
       | Polymorphic _ ->
+        let () = assert (Univ.ContextSet.is_empty univs) in
         (** Inline the term to emulate universe polymorphism *)
         let subst = Cmap_env.add c (Inl b) subst in
         (subst, var, ctx, args)
@@ -764,10 +724,10 @@ let constant_entry_of_side_effect eff =
   let open Entries in
   let univs =
     match cb.const_universes with
-    | Monomorphic uctx ->
-      Monomorphic_entry uctx
+    | Monomorphic ->
+      Monomorphic_entry
     | Polymorphic auctx ->
-      Polymorphic_entry (Univ.AUContext.names auctx, Univ.AUContext.repr auctx)
+      Polymorphic_entry (Univ.AbstractContext.repr auctx)
   in
   let p =
     match cb.const_body with
@@ -799,8 +759,8 @@ let is_empty_private = function
 | Opaqueproof.PrivatePolymorphic (_, ctx) -> Univ.ContextSet.is_empty ctx
 
 let empty_private univs = match univs with
-| Monomorphic _ -> Opaqueproof.PrivateMonomorphic Univ.ContextSet.empty
-| Polymorphic auctx -> Opaqueproof.PrivatePolymorphic (Univ.AUContext.size auctx, Univ.ContextSet.empty)
+| Monomorphic -> Opaqueproof.PrivateMonomorphic Univ.ContextSet.empty
+| Polymorphic auctx -> Opaqueproof.PrivatePolymorphic (Univ.AbstractContext.size auctx, Univ.ContextSet.empty)
 
 (* Special function to call when the body of an opaque definition is provided.
   It performs the type-checking of the body immediately. *)
@@ -824,18 +784,18 @@ let export_side_effects senv eff =
       let push_seff env eff =
         let { seff_constant = kn; seff_body = cb ; _ } = eff in
         let env = Environ.add_constant kn (lift_constant cb) env in
-        match cb.const_universes with
-        | Polymorphic _ -> env
-        | Monomorphic ctx ->
-          Environ.push_context_set ~strict:true ctx env
+        env
       in
     match trusted with
     | Some univs ->
       univs, List.map export_eff seff
     | None ->
-      let rec recheck_seff seff acc env = match seff with
-      | [] -> List.rev acc
+      let rec recheck_seff seff univs acc env = match seff with
+      | [] -> univs, List.rev acc
       | eff :: rest ->
+        let uctx = eff.seff_univs in
+        let env = Environ.push_context_set ~strict:true uctx env in
+        let univs = Univ.ContextSet.union uctx univs in
         let env, cb =
           let kn = eff.seff_constant in
           let ce = constant_entry_of_side_effect eff in
@@ -849,9 +809,9 @@ let export_side_effects senv eff =
             let eff = { eff with seff_body = cb } in
             (push_seff env eff, export_eff eff)
         in
-        recheck_seff rest (cb :: acc) env
+        recheck_seff rest univs (cb :: acc) env
       in
-      Univ.ContextSet.empty, recheck_seff seff [] env
+      recheck_seff seff Univ.ContextSet.empty [] env
 
 let push_opaque_proof pf senv =
   let o, otab = Opaqueproof.create (library_dp_of_senv senv) pf (Environ.opaque_tables senv.env) in
@@ -932,13 +892,20 @@ let add_constant l decl senv =
 let add_constant ?typing_flags l decl senv =
   with_typing_flags ?typing_flags senv ~f:(add_constant l decl)
 
-let add_private_constant l decl senv : (Constant.t * private_constants) * safe_environment =
+let check_constraints uctx = function
+| Entries.Polymorphic_entry _ -> Univ.ContextSet.is_empty uctx
+| Entries.Monomorphic_entry -> true
+
+let add_private_constant l uctx decl senv : (Constant.t * private_constants) * safe_environment =
   let kn = Constant.make2 senv.modpath l in
+  let senv = push_context_set ~strict:true uctx senv in
     let cb =
       match decl with
       | OpaqueEff ce ->
+        let () = assert (check_constraints uctx ce.Entries.opaque_entry_universes) in
         translate_direct_opaque senv.env kn ce
       | DefinitionEff ce ->
+        let () = assert (check_constraints uctx ce.Entries.const_entry_universes) in
         Term_typing.translate_constant senv.env kn (Entries.DefinitionEntry ce)
     in
   let dcb = match cb.const_body with
@@ -958,6 +925,7 @@ let add_private_constant l decl senv : (Constant.t * private_constants) * safe_e
       seff_certif = from_env;
       seff_constant = kn;
       seff_body = cb;
+      seff_univs = uctx;
     } in
     SideEffects.add eff empty_private_constants
   in
@@ -985,6 +953,13 @@ let add_mind l mie senv =
   let sec_univs = Option.map Section.all_poly_univs  senv.sections
   in
   let mib = Indtypes.check_inductive senv.env ~sec_univs kn mie in
+  (* We still have to add the template monomorphic constraints, and only those
+     ones. In all other cases, they are already part of the environment at this
+     point. *)
+  let senv = match mib.mind_template with
+  | None -> senv
+  | Some { template_context = ctx; _ } -> push_context_set ~strict:true ctx senv
+  in
   kn, add_checked_mind kn mib senv
 
 let add_mind ?typing_flags l mie senv =
@@ -995,7 +970,7 @@ let add_mind ?typing_flags l mie senv =
 let add_modtype l params_mte inl senv =
   let mp = MPdot(senv.modpath, l) in
   let mtb, cst = Mod_typing.translate_modtype senv.env mp inl params_mte  in
-  let senv = push_context_set ~strict:true (Univ.LSet.empty,cst) senv in
+  let senv = push_context_set ~strict:true (Univ.Level.Set.empty,cst) senv in
   let mtb = Declareops.hcons_module_type mtb in
   let senv = add_field (l,SFBmodtype mtb) MT senv in
   mp, senv
@@ -1015,7 +990,7 @@ let full_add_module_type mp mt senv =
 let add_module l me inl senv =
   let mp = MPdot(senv.modpath, l) in
   let mb, cst = Mod_typing.translate_module senv.env mp inl me in
-  let senv = push_context_set ~strict:true (Univ.LSet.empty,cst) senv in
+  let senv = push_context_set ~strict:true (Univ.Level.Set.empty,cst) senv in
   let mb = Declareops.hcons_module_body mb in
   let senv = add_field (l,SFBmodule mb) M senv in
   let senv =
@@ -1059,7 +1034,7 @@ let add_module_parameter mbid mte inl senv =
   let () = check_empty_struct senv in
   let mp = MPbound mbid in
   let mtb, cst = Mod_typing.translate_modtype senv.env mp inl ([],mte) in
-  let senv = push_context_set ~strict:true (Univ.LSet.empty,cst) senv in
+  let senv = push_context_set ~strict:true (Univ.Level.Set.empty,cst) senv in
   let senv = full_add_module_type mp mtb senv in
   let new_variant = match senv.modvariant with
     | STRUCT (params,oldenv) -> STRUCT ((mbid,mtb) :: params, oldenv)
@@ -1099,7 +1074,7 @@ let build_module_body params restype senv =
   let restype' = Option.map (fun (ty,inl) -> (([],ty),inl)) restype in
   let mb, cst =
     Mod_typing.finalize_module senv.env senv.modpath
-      (struc,None,senv.modresolver,Univ.Constraint.empty) restype'
+      (struc,None,senv.modresolver,Univ.Constraints.empty) restype'
   in
   let mb' = functorize_module params mb in
   { mb' with mod_retroknowledge = ModBodyRK senv.local_retroknowledge }, cst
@@ -1141,7 +1116,7 @@ let end_module l restype senv =
   let () = check_empty_context senv in
   let mbids = List.rev_map fst params in
   let mb, cst = build_module_body params restype senv in
-  let senv = push_context_set ~strict:true (Univ.LSet.empty,cst) senv in
+  let senv = push_context_set ~strict:true (Univ.Level.Set.empty,cst) senv in
   let newenv = Environ.set_opaque_tables oldsenv.env (Environ.opaque_tables senv.env) in
   let newenv = Environ.set_universes (Environ.universes senv.env) newenv in
   let senv' = propagate_loads { senv with env = newenv } in
@@ -1185,7 +1160,7 @@ let add_include me is_module inl senv =
   let sign,(),resolver,cst =
     translate_mse_incl is_module senv.env mp_sup inl me
   in
-  let senv = push_context_set ~strict:true (Univ.LSet.empty,cst) senv in
+  let senv = push_context_set ~strict:true (Univ.Level.Set.empty,cst) senv in
   (* Include Self support  *)
   let rec compute_sign sign mb resolver senv =
     match sign with
@@ -1219,7 +1194,7 @@ let add_include me is_module inl senv =
       | SFBmodule _ -> M
       | SFBmodtype _ -> MT
     in
-    add_field ~is_include:true field new_name senv
+    add_field field new_name senv
   in
   resolver, List.fold_left add senv str
 
@@ -1400,7 +1375,7 @@ let check_register_ind (type t) ind (r : t CPrimitives.prim_ind) env =
     if not b then
       CErrors.user_err ~hdr:"check_register_ind" msg in
   check_if (Int.equal (Array.length mb.mind_packets) 1) Pp.(str "A non mutual inductive is expected");
-  let is_monomorphic = function Monomorphic _ -> true | Polymorphic _ -> false in
+  let is_monomorphic = function Monomorphic -> true | Polymorphic _ -> false in
   check_if (is_monomorphic mb.mind_universes) Pp.(str "A universe monomorphic inductive type is expected");
   check_if (not @@ Inductive.is_private spec) Pp.(str "A non-private inductive type is expected");
   let check_nparams n =
@@ -1418,7 +1393,7 @@ let check_register_ind (type t) ind (r : t CPrimitives.prim_ind) env =
     check_if (Constr.equal t ob.mind_user_lc.(pos))
       Pp.(str"the " ++ int (pos + 1) ++ str
        "th constructor does not have the expected type") in
-  let check_type_cte pos = check_type pos (Constr.mkRel 1) in
+  let check_type_cte pos = check_type pos (Constr.mkInd ind) in
   match r with
   | CPrimitives.PIT_bool ->
     check_nparams 0;
@@ -1439,7 +1414,7 @@ let check_register_ind (type t) ind (r : t CPrimitives.prim_ind) env =
       check_if (Constr.is_Type d) s;
       check_if
         (Constr.equal
-                (mkProd (Context.anonR,mkRel 1, mkApp (mkRel 3,[|mkRel 2|])))
+                (mkProd (Context.anonR,mkRel 1, mkApp (mkInd ind,[|mkRel 2|])))
                 cd)
         s in
     check_name 0 "C0";
@@ -1458,7 +1433,7 @@ let check_register_ind (type t) ind (r : t CPrimitives.prim_ind) env =
         check_if (is_Type _B) s;
         check_if (Constr.equal a (mkRel 2)) s;
         check_if (Constr.equal b (mkRel 2)) s;
-        check_if (Constr.equal codom (mkApp (mkRel 5,[|mkRel 4; mkRel 3|]))) s
+        check_if (Constr.equal codom (mkApp (mkInd ind,[|mkRel 4; mkRel 3|]))) s
       | _ -> check_if false s
     end
   | CPrimitives.PIT_cmp ->

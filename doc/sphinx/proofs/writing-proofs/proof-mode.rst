@@ -26,6 +26,10 @@ and a :gdef:`local context`, which contains named :term:`hypotheses <hypothesis>
 proving the conclusion.  The proof may also use *constants* from the :term:`global environment`
 such as definitions and proven theorems.
 
+(Note that *conclusion* is also used to refer to the last part of an implication.
+For example, in `A -> B -> C`, `A` and `B` are :term:`premises <premise>` and `C`
+is the conclusion.)
+
 The term ":gdef:`goal`" may refer to an entire goal or to the conclusion
 of a goal, depending on the context.
 
@@ -377,30 +381,6 @@ Name a set of section hypotheses for ``Proof using``
       ``Fewer`` and the unnamed collection ``x y``::
 
          Collection Many := Fewer - (x y)
-
-
-
-.. cmd:: Existential @natural {? : @type } := @term
-
-   This command instantiates an existential variable. :token:`natural` is an index in
-   the list of uninstantiated existential variables displayed by :cmd:`Show Existentials`.
-
-   This command is intended to be used to instantiate existential
-   variables when the proof is completed but some uninstantiated
-   existential variables remain. To instantiate existential variables
-   during proof edition, you should use the tactic :tacn:`instantiate`.
-
-   .. deprecated:: 8.13
-
-.. cmd:: Grab Existential Variables
-
-   This command can be run when a proof has no more goal to be solved but
-   has remaining uninstantiated existential variables. It takes every
-   uninstantiated existential variable and turns it into a goal.
-
-   .. deprecated:: 8.13
-
-      Use :cmd:`Unshelve` instead.
 
 Proof modes
 -----------

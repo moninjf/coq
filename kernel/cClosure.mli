@@ -26,7 +26,7 @@ val with_stats: 'a Lazy.t -> 'a
   a LetIn expression is Letin reduction *)
 
 (** Sets of reduction kinds. *)
-module type RedFlagsSig = sig
+module RedFlags : sig
   type reds
   type red_kind
 
@@ -34,8 +34,6 @@ module type RedFlagsSig = sig
 
   val fBETA : red_kind
   val fDELTA : red_kind
-  val fETA : red_kind
-  (** The fETA flag is never used by the kernel reduction but pretyping does *)
   val fMATCH : red_kind
   val fFIX : red_kind
   val fCOFIX : red_kind
@@ -69,7 +67,6 @@ module type RedFlagsSig = sig
   val red_projection : reds -> Projection.t -> bool
 end
 
-module RedFlags : RedFlagsSig
 open RedFlags
 
 (* These flags do not contain eta *)
@@ -150,6 +147,11 @@ val get_native_args1 : CPrimitives.t -> pconstant -> stack ->
 val stack_args_size : stack -> int
 val eta_expand_stack : stack -> stack
 
+val inductive_subst : Declarations.mutual_inductive_body
+  -> Univ.Instance.t
+  -> fconstr array
+  -> fconstr Esubst.subs
+
 (** To lazy reduce a constr, create a [clos_infos] with
    [create_clos_infos], inject the term to reduce with [inject]; then use
    a reduction function *)
@@ -222,7 +224,8 @@ val eta_expand_ind_stack : env -> inductive -> fconstr -> stack ->
 (** Conversion auxiliary functions to do step by step normalisation *)
 
 (** [unfold_reference] unfolds references in a [fconstr] *)
-val unfold_reference : clos_infos -> clos_tab -> table_key -> (fconstr, Util.Empty.t) constant_def
+val unfold_reference : Environ.env -> TransparentState.t ->
+  clos_tab -> table_key -> (fconstr, Util.Empty.t) constant_def
 
 (** Hook for Reduction *)
 val set_conv : (clos_infos -> clos_tab -> fconstr -> fconstr -> bool) -> unit

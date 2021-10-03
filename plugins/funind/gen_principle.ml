@@ -103,7 +103,7 @@ let is_rec names =
               (fun acc na -> Nameops.Name.fold_right Id.Set.remove na acc)
               names nal)
            b
-    | GApp (f, args) -> List.exists (lookup names) (f :: args)
+    | GApp (c, args) | GProj (_, args, c) -> List.exists (lookup names) (c :: args)
     | GArray (_u, t, def, ty) ->
       Array.exists (lookup names) t || lookup names def || lookup names ty
     | GCases (_, _, el, brl) ->
@@ -236,7 +236,7 @@ let change_property_sort evd toSort princ princName =
         Global.add_constraints
           (Univ.enforce_leq
              (Sorts.univ_of_sort toSort)
-             (Sorts.univ_of_sort s) Univ.Constraint.empty);
+             (Sorts.univ_of_sort s) Univ.Constraints.empty);
         Term.compose_prod args (Constr.mkSort toSort) )
   in
   let evd, princName_as_constr =
@@ -1018,11 +1018,8 @@ let rec reflexivity_with_destruct_cases () =
       let my_inj_flags =
         Some
           { Equality.keep_proof_equalities = false
-          ; injection_in_context = false
-          ; (* for compatibility, necessary *)
-            injection_pattern_l2r_order =
-              false
-              (* probably does not matter; except maybe with dependent hyps *)
+          ; injection_pattern_l2r_order = false
+            (* probably does not matter; except maybe with dependent hyps *)
           }
       in
       let discr_inject =
@@ -1045,7 +1042,7 @@ let rec reflexivity_with_destruct_cases () =
                         (Proofview.Goal.sigma g) ~keep_proofs:None t1 t2
                     then
                       tclTHENLIST
-                        [ Equality.injHyp my_inj_flags None id
+                        [ Equality.injHyp my_inj_flags ~injection_in_context:false None id
                         ; thin [id]
                         ; intros_with_rewrite () ]
                     else Proofview.tclUNIT ()
@@ -1660,7 +1657,7 @@ let register_wf interactive_proof ?(is_mes = false) fname rec_impls wf_rel_expr
     let f_app_args =
       CAst.make
       @@ Constrexpr.CAppExpl
-           ( (None, Libnames.qualid_of_ident fname, None)
+           ( (Libnames.qualid_of_ident fname, None)
            , List.map
                (function
                  | {CAst.v = Anonymous} -> assert false
@@ -1669,7 +1666,7 @@ let register_wf interactive_proof ?(is_mes = false) fname rec_impls wf_rel_expr
     in
     CAst.make
     @@ Constrexpr.CApp
-         ( (None, Constrexpr_ops.mkRefC (Libnames.qualid_of_string "Logic.eq"))
+         ( Constrexpr_ops.mkRefC (Libnames.qualid_of_string "Logic.eq")
          , [(f_app_args, None); (body, None)] )
   in
   let eq = Constrexpr_ops.mkCProdN args unbounded_eq in
@@ -1951,7 +1948,7 @@ let rec add_args id new_args =
   CAst.map (function
     | CRef (qid, _) as b ->
       if qualid_is_ident qid && Id.equal (qualid_basename qid) id then
-        CAppExpl ((None, qid, None), new_args)
+        CAppExpl ((qid, None), new_args)
       else b
     | CFix _ | CCoFix _ -> CErrors.anomaly ~label:"add_args " (Pp.str "todo.")
     | CProdN (nal, b1) ->
@@ -1990,15 +1987,20 @@ let rec add_args id new_args =
         , add_args id new_args b1
         , Option.map (add_args id new_args) t
         , add_args id new_args b2 )
-    | CAppExpl ((pf, qid, us), exprl) ->
+    | CAppExpl ((qid, us), exprl) ->
       if qualid_is_ident qid && Id.equal (qualid_basename qid) id then
         CAppExpl
-          ((pf, qid, us), new_args @ List.map (add_args id new_args) exprl)
-      else CAppExpl ((pf, qid, us), List.map (add_args id new_args) exprl)
-    | CApp ((pf, b), bl) ->
+          ((qid, us), new_args @ List.map (add_args id new_args) exprl)
+      else CAppExpl ((qid, us), List.map (add_args id new_args) exprl)
+    | CApp (b, bl) ->
       CApp
-        ( (pf, add_args id new_args b)
+        ( add_args id new_args b
         , List.map (fun (e, o) -> (add_args id new_args e, o)) bl )
+    | CProj (expl, f, bl, b) ->
+      CProj
+        (expl, f
+        , List.map (fun (e, o) -> (add_args id new_args e, o)) bl
+        , add_args id new_args b)
     | CCases (sty, b_option, cel, cal) ->
       CCases
         ( sty

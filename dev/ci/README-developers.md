@@ -16,9 +16,9 @@ We are currently running tests on the following platforms:
   `./configure`. It should allow complying with this discipline
   without pain.
 
-- Azure Pipelines is used to test the compilation of Coq and run the
-  test-suite on Windows and on macOS. It is expected to be used to build
-  macOS and Windows packages eventually.
+- Github Actions are used to test the compilation of Coq on Windows
+  and macOS. For Windows, the Coq platform script is used, producing
+  an installer that can be used to test Coq.
 
 You can anticipate the results of most of these tests prior to submitting your
 PR by running GitLab CI on your private branches. To do so follow these steps:
@@ -149,20 +149,6 @@ Currently available artifacts are:
   + Coq's ML API Documentation [master branch]:
     <https://coq.github.io/doc/master/api/>
 
-### GitLab and Windows
-
-If your repository has access to runners tagged `windows`, setting the
-secret variable `WINDOWS` to `enabled` will add jobs building Windows
-versions of Coq (32bit and 64bit).
-
-If the secret variable `WINDOWS` is set to `enabled_all_addons`,
-an extended set of addons will be added to the Windows installer.
-This leads to a considerable runtime in CI so this is not enabled
-by default for pipelines for pull requests.
-
-The Windows jobs are enabled on Coq's repository, where pipelines for
-pull requests run.
-
 ### GitLab and Docker
 
 System and opam packages are installed in a Docker image. The image is
@@ -177,13 +163,8 @@ The Docker building job reuses the uploaded image if it is available,
 but if you wish to save more time you can skip the job by setting
 `SKIP_DOCKER` to `true`.
 
-This means you will need to change its value when the Docker image
-needs to be updated. You can do so for a single pipeline by starting
-it through the web interface. Here is a direct link that you can use
-to trigger such a build:
-`https://gitlab.com/coq/coq/pipelines/new?var[SKIP_DOCKER]=false&ref=pr-XXXXX`.
-Note that this link will give a 404 error if you are not logged in or
-a member of the Coq organization on GitLab.  To request to join the
-Coq organization, go to https://gitlab.com/coq to request access.
+In the case of the main Coq repository, this variable is set to true
+by default, but coqbot will set it to `false` anytime a PR modifies a
+path matching `dev/ci/docker/.*Dockerfile.*`.
 
 See also [`docker/README.md`](docker/README.md).

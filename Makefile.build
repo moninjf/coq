@@ -80,6 +80,7 @@ include Makefile.vofiles
 include Makefile.doc      ## provides the 'documentation' rule
 include Makefile.ide      ## provides the 'coqide' rule
 include Makefile.install
+include Makefile.dev
 
 ###########################################################################
 # Default starting rule
@@ -98,7 +99,7 @@ states: $(VO_OUT_DIR)theories/Init/Prelude.$(VO)
 
 .PHONY: coqbinaries tools
 
-coqbinaries: $(TOPBINOPT) $(COQC) $(COQTOPEXE) $(CHICKEN) $(CSDPCERT) $(FAKEIDE) $(COQNATIVE)
+coqbinaries: $(TOPBINOPT) $(COQC) $(COQTOPEXE) $(CHICKEN) $(CSDPCERT) $(COQNATIVE)
 tools: $(TOOLS) $(OCAMLLIBDEP) $(COQDEP) $(DOC_GRAM)
 
 ###########################################################################

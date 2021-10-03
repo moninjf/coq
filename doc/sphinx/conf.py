@@ -35,6 +35,10 @@ sys.setrecursionlimit(3000)
 sys.path.append(os.path.abspath('../tools/'))
 sys.path.append(os.path.abspath('../../config/'))
 
+# Disable the correct_copyright_year misfeature from Sphinx
+# See https://github.com/coq/coq/issues/7378
+sphinx.config.correct_copyright_year = lambda *args, **kwargs: None
+
 import coq_config
 
 # -- Prolog ---------------------------------------------------------------
@@ -46,7 +50,7 @@ with open("refman-preamble.rst") as s:
 # -- General configuration ------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
-needs_sphinx = '2.3.1'
+needs_sphinx = '3.0.2'
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
@@ -108,7 +112,7 @@ master_doc = "index"
 
 # General information about the project.
 project = 'Coq'
-copyright = '1999-2020, Inria, CNRS and contributors'
+copyright = '1999-2021, Inria, CNRS and contributors'
 author = 'The Coq Development Team'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -216,7 +220,8 @@ html_context = {
     'versions': [
         ("dev", "https://coq.github.io/doc/master/refman/"),
         ("stable", "https://coq.inria.fr/distrib/current/refman/"),
-        ("v8.13", "https://coq.github.io/doc/v8.13/refman/"),
+        ("v8.14", "https://coq.github.io/doc/v8.14/refman/"),
+        ("8.13", "https://coq.inria.fr/distrib/V8.13.2/refman/"),
         ("8.12", "https://coq.inria.fr/distrib/V8.12.2/refman/"),
         ("8.11", "https://coq.inria.fr/distrib/V8.11.2/refman/"),
         ("8.10", "https://coq.inria.fr/distrib/V8.10.2/refman/"),

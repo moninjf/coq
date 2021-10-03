@@ -223,6 +223,17 @@ struct
   (** Map all terms in a given rel-context. *)
   let map f = List.Smart.map (Declaration.map_constr f)
 
+  (** Map all terms in a given rel-context. *)
+  let map_with_binders f ctx =
+    let rec aux k = function
+      | decl :: ctx as l ->
+        let decl' = Declaration.map_constr (f k) decl in
+        let ctx' = aux (k-1) ctx in
+        if decl == decl' && ctx == ctx' then l else decl' :: ctx'
+      | [] -> []
+    in
+    aux (length ctx) ctx
+
   (** Perform a given action on every declaration in a given rel-context. *)
   let iter f = List.iter (Declaration.iter_constr f)
 
@@ -258,6 +269,10 @@ struct
 
   (** [extended_vect n Γ] does the same, returning instead an array. *)
   let to_extended_vect mk n hyps = Array.of_list (to_extended_list mk n hyps)
+
+  (** Consistency with terminology in Named *)
+  let instance = to_extended_vect
+  let instance_list = to_extended_list
 end
 
 (** This module represents contexts that can capture non-anonymous variables.
@@ -456,7 +471,7 @@ struct
 
   let drop_bodies l = List.Smart.map Declaration.drop_body l
 
-  (** [instance_from_named_context Ω] builds an instance [args] such
+  (** [to_instance Ω] builds an instance [args] in reverse order such
       that [Ω ⊢ args:Ω] where [Ω] is a named context and with the local
       definitions of [Ω] skipped. Example: for [id1:T,id2:=c,id3:U], it
       gives [Var id1, Var id3]. All [idj] are supposed distinct. *)
@@ -466,6 +481,20 @@ struct
       | _ -> None
     in
     List.map_filter filter l
+
+  (** [instance Ω] builds an instance [args] such
+      that [Ω ⊢ args:Ω] where [Ω] is a named context and with the local
+      definitions of [Ω] skipped. Example: for [id1:T,id2:=c,id3:U], it
+      gives [Var id1, Var id3]. All [idj] are supposed distinct. *)
+  let instance_list mk l =
+    let filter = function
+      | Declaration.LocalAssum (id, _) -> Some (mk id.binder_name)
+      | _ -> None
+    in
+    List.rev (List.map_filter filter l)
+
+  let instance mk l =
+    Array.of_list (instance_list mk l)
 end
 
 module Compacted =

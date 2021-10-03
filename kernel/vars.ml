@@ -83,6 +83,12 @@ let exliftn = Constr.exliftn
 let liftn = Constr.liftn
 let lift = Constr.lift
 
+let liftn_rel_context n k =
+  Context.Rel.map_with_binders (fun i -> liftn n (i+k-1))
+
+let lift_rel_context n =
+  Context.Rel.map_with_binders (liftn n)
+
 (*********************)
 (*   Substituting    *)
 (*********************)
@@ -151,6 +157,12 @@ let substnl_decl laml k r = RelDecl.map_constr (fun c -> substnl laml k c) r
 let substl_decl laml r = RelDecl.map_constr (fun c -> substnl laml 0 c) r
 let subst1_decl lam r = RelDecl.map_constr (fun c -> subst1 lam c) r
 
+let substnl_rel_context laml k r =
+  Context.Rel.map_with_binders (fun i -> substnl laml (i+k-1)) r
+
+let substl_rel_context laml r = substnl_rel_context laml 0 r
+let subst1_rel_context lam r = substnl_rel_context [lam] 0 r
+
 let esubst mk subst c =
   let rec esubst subst c = match Constr.kind c with
   | Constr.Rel i ->
@@ -164,9 +176,14 @@ let esubst mk subst c =
   in
   if Esubst.is_subs_id subst then c else esubst subst c
 
+(* Instance of contexts *)
+
+type instance = Constr.t array
+type instance_list = Constr.t list
+
 (* Build a substitution from an instance, inserting missing let-ins *)
 
-let subst_of_rel_context_instance sign l =
+let subst_of_rel_context_instance_list sign l =
   let rec aux subst sign l =
     let open RelDecl in
     match sign, l with
@@ -176,6 +193,9 @@ let subst_of_rel_context_instance sign l =
     | [], [] -> subst
     | _ -> CErrors.anomaly (Pp.str "Instance and signature do not match.")
   in aux [] (List.rev sign) l
+
+let subst_of_rel_context_instance sign v =
+  subst_of_rel_context_instance_list sign (Array.to_list v)
 
 let adjust_rel_to_rel_context sign n =
   let rec aux sign =
@@ -227,6 +247,16 @@ let substn_vars p vars c =
   in replace_vars (List.rev subst) c
 
 let subst_vars subst c = substn_vars 1 subst c
+
+let smash_rel_context sign =
+  let open Context.Rel.Declaration in
+  let open Esubst in
+  snd (List.fold_right
+    (fun decl (subst, sign) ->
+       match get_value decl with
+       | Some b -> (subs_cons (make_substituend (esubst lift_substituend subst b)) subst, sign)
+       | None -> (subs_lift subst, map_constr (esubst lift_substituend subst) decl :: sign))
+    sign (subs_id 0, []))
 
 (** Universe substitutions *)
 open Constr
@@ -348,7 +378,7 @@ let subst_instance_constr subst c =
 
 let univ_instantiate_constr u c =
   let open Univ in
-  assert (Int.equal (Instance.length u) (AUContext.size c.univ_abstracted_binder));
+  assert (Int.equal (Instance.length u) (AbstractContext.size c.univ_abstracted_binder));
   subst_instance_constr u c.univ_abstracted_value
 
 let subst_instance_context s ctx =
@@ -360,17 +390,17 @@ let universes_of_constr c =
   let rec aux s c =
     match kind c with
     | Const (_c, u) ->
-      LSet.fold LSet.add (Instance.levels u) s
+      Level.Set.fold Level.Set.add (Instance.levels u) s
     | Ind ((_mind,_), u) | Construct (((_mind,_),_), u) ->
-      LSet.fold LSet.add (Instance.levels u) s
+      Level.Set.fold Level.Set.add (Instance.levels u) s
     | Sort u when not (Sorts.is_small u) ->
       let u = Sorts.univ_of_sort u in
-      LSet.fold LSet.add (Universe.levels u) s
+      Level.Set.fold Level.Set.add (Universe.levels u) s
     | Array (u,_,_,_) ->
-      let s = LSet.fold LSet.add (Instance.levels u) s in
+      let s = Level.Set.fold Level.Set.add (Instance.levels u) s in
       Constr.fold aux s c
     | Case (_, u, _, _, _,_ ,_) ->
-      let s = LSet.fold LSet.add (Instance.levels u) s in
+      let s = Level.Set.fold Level.Set.add (Instance.levels u) s in
       Constr.fold aux s c
     | _ -> Constr.fold aux s c
-  in aux LSet.empty c
+  in aux Level.Set.empty c

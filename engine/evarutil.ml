@@ -21,14 +21,15 @@ open Namegen
 module RelDecl = Context.Rel.Declaration
 module NamedDecl = Context.Named.Declaration
 
-let safe_evar_value sigma ev =
-  let ev = EConstr.of_existential ev in
-  try Some (EConstr.Unsafe.to_constr @@ Evd.existential_value sigma ev)
-  with NotInstantiatedEvar | Not_found -> None
-
 let new_global evd x =
   let (evd, c) = Evd.fresh_global (Global.env()) evd x in
   (evd, c)
+
+let create_clos_infos env sigma flags =
+  let open CClosure in
+  let evars ev = Evd.existential_opt_value0 sigma ev in
+  create_clos_infos ~univs:(Evd.universes sigma) ~evars flags env
+
 
 (****************************************************)
 (* Expanding/testing/exposing existential variables *)
@@ -36,11 +37,11 @@ let new_global evd x =
 
 let finalize ?abort_on_undefined_evars sigma f =
   let sigma = minimize_universes sigma in
-  let uvars = ref Univ.LSet.empty in
+  let uvars = ref Univ.Level.Set.empty in
   let v = f (fun c ->
       let varsc = EConstr.universes_of_constr sigma c in
       let c = EConstr.to_constr ?abort_on_undefined_evars sigma c in
-      uvars := Univ.LSet.union !uvars varsc;
+      uvars := Univ.Level.Set.union !uvars varsc;
       c)
   in
   let sigma = restrict_universe_context sigma !uvars in
@@ -64,7 +65,7 @@ let flush_and_check_evars sigma c =
 (** Term exploration up to instantiation. *)
 let kind_of_term_upto = EConstr.kind_upto
 
-let nf_evar0 sigma t = EConstr.to_constr ~abort_on_undefined_evars:false sigma (EConstr.of_constr t)
+let nf_evars_universes sigma t = EConstr.to_constr ~abort_on_undefined_evars:false sigma (EConstr.of_constr t)
 let whd_evar = EConstr.whd_evar
 let nf_evar sigma c = EConstr.of_constr (EConstr.to_constr ~abort_on_undefined_evars:false sigma c)
 
@@ -76,12 +77,8 @@ let jv_nf_evar sigma = Array.map (j_nf_evar sigma)
 let tj_nf_evar sigma {utj_val=v;utj_type=t} =
   {utj_val=nf_evar sigma v;utj_type=t}
 
-let nf_evars_universes evm =
-  UnivSubst.nf_evars_and_universes_opt_subst (safe_evar_value evm)
-    (Evd.universe_subst evm)
-
 let nf_named_context_evar sigma ctx =
-  Context.Named.map (nf_evar0 sigma) ctx
+  Context.Named.map (nf_evars_universes sigma) ctx
 
 let nf_rel_context_evar sigma ctx =
   Context.Rel.map (nf_evar sigma) ctx
@@ -419,7 +416,7 @@ let new_pure_evar ?(src=default_source) ?(filter = Filter.identity) ?identity
   in
   let identity = match identity with
   | None -> Identity.none ()
-  | Some inst -> Identity.make inst
+  | Some inst -> inst
   in
   let evi = {
     evar_hyps = sign;
@@ -451,7 +448,7 @@ let new_evar ?src ?filter ?abstract_arguments ?candidates ?naming ?typeclass_can
     match filter with
     | None -> instance
     | Some filter -> Filter.filter_list filter instance in
-  let identity = if Int.equal (Environ.nb_rel env) 0 then Some instance else None in
+  let identity = if Int.equal (Environ.nb_rel env) 0 then Some (Identity.make instance) else None in
   let (evd, evk) = new_pure_evar sign evd typ' ?src ?filter ?identity ?abstract_arguments ?candidates ?naming
     ?typeclass_candidate ?principal in
   (evd, EConstr.mkEvar (evk, instance))
@@ -826,15 +823,15 @@ let subterm_source evk ?where (loc,k) =
    irrelevant positions, unify universes when flexible. *)
 let compare_cumulative_instances cv_pb variances u u' sigma =
   let open UnivProblem in
-  let cstrs = Univ.Constraint.empty in
+  let cstrs = Univ.Constraints.empty in
   let soft = Set.empty in
   let cstrs, soft = Array.fold_left3 (fun (cstrs, soft) v u u' ->
       let open Univ.Variance in
       match v with
       | Irrelevant -> cstrs, Set.add (UWeak (u,u')) soft
       | Covariant when cv_pb == Reduction.CUMUL ->
-        Univ.Constraint.add (u,Univ.Le,u') cstrs, soft
-      | Covariant | Invariant -> Univ.Constraint.add (u,Univ.Eq,u') cstrs, soft)
+        Univ.Constraints.add (u,Univ.Le,u') cstrs, soft
+      | Covariant | Invariant -> Univ.Constraints.add (u,Univ.Eq,u') cstrs, soft)
       (cstrs,soft) variances (Univ.Instance.to_array u) (Univ.Instance.to_array u')
   in
   match Evd.add_constraints sigma cstrs with

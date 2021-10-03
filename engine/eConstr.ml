@@ -391,11 +391,10 @@ let expand_branch env _sigma u pms (ind, i) (nas, _br) =
   let pms = unsafe_to_constr_array pms in
   let (mib, mip) = Inductive.lookup_mind_specif env ind in
   let paramdecl = Vars.subst_instance_context u mib.mind_params_ctxt in
-  let paramsubst = Vars.subst_of_rel_context_instance paramdecl (Array.to_list pms) in
-  let subst = paramsubst @ Inductive.ind_subst (fst ind) mib u in
+  let paramsubst = Vars.subst_of_rel_context_instance paramdecl pms in
   let (ctx, _) = mip.mind_nf_lc.(i - 1) in
   let (ctx, _) = List.chop mip.mind_consnrealdecls.(i - 1) ctx in
-  let ans = Inductive.instantiate_context u subst nas ctx in
+  let ans = Inductive.instantiate_context u paramsubst nas ctx in
   let ans : rel_context = match Evd.MiniEConstr.unsafe_eq with Refl -> ans in
   ans
 
@@ -537,7 +536,7 @@ let eq_universes env sigma cstrs cv_pb refargs l l' =
       cstrs := cmp_constructors (mind,ind,ctor) nargs l l' !cstrs;
       true
 
-let test_constr_universes env sigma leq m n =
+let test_constr_universes env sigma leq ?(nargs=0) m n =
   let open UnivProblem in
   let kind c = kind sigma c in
   if m == n then Some Set.empty
@@ -570,16 +569,16 @@ let test_constr_universes env sigma leq m n =
           Constr.compare_head_gen_leq_with kind kind leq_universes leq_sorts
             eq_constr' leq_constr' nargs m n
         and leq_constr' nargs m n = m == n || compare_leq nargs m n in
-        compare_leq 0 m n
+        compare_leq nargs m n
       else
-        Constr.compare_head_gen_with kind kind eq_universes eq_sorts eq_constr' 0 m n
+        Constr.compare_head_gen_with kind kind eq_universes eq_sorts eq_constr' nargs m n
     in
     if res then Some !cstrs else None
 
-let eq_constr_universes env sigma m n =
-  test_constr_universes env sigma false m n
-let leq_constr_universes env sigma m n =
-  test_constr_universes env sigma true m n
+let eq_constr_universes env sigma ?nargs m n =
+  test_constr_universes env sigma false ?nargs m n
+let leq_constr_universes env sigma ?nargs m n =
+  test_constr_universes env sigma true ?nargs m n
 
 let compare_head_gen_proj env sigma equ eqs eqc' nargs m n =
   let kind c = kind sigma c in
@@ -621,26 +620,26 @@ let universes_of_constr sigma c =
   let rec aux s c =
     match kind sigma c with
     | Const (c, u) ->
-      LSet.fold LSet.add (Instance.levels (EInstance.kind sigma u)) s
+      Level.Set.fold Level.Set.add (Instance.levels (EInstance.kind sigma u)) s
     | Ind ((mind,_), u) | Construct (((mind,_),_), u) ->
-      LSet.fold LSet.add (Instance.levels (EInstance.kind sigma u)) s
+      Level.Set.fold Level.Set.add (Instance.levels (EInstance.kind sigma u)) s
     | Sort u ->
       let sort = ESorts.kind sigma u in
       if Sorts.is_small sort then s
       else
         let u = Sorts.univ_of_sort sort in
-        LSet.fold LSet.add (Universe.levels u) s
+        Level.Set.fold Level.Set.add (Universe.levels u) s
     | Evar (k, args) ->
       let concl = Evd.evar_concl (Evd.find sigma k) in
       fold sigma aux (aux s concl) c
     | Array (u,_,_,_) ->
-      let s = LSet.fold LSet.add (Instance.levels (EInstance.kind sigma u)) s in
+      let s = Level.Set.fold Level.Set.add (Instance.levels (EInstance.kind sigma u)) s in
       fold sigma aux s c
     | Case (_,u,_,_,_,_,_) ->
-      let s = LSet.fold LSet.add (Instance.levels (EInstance.kind sigma u)) s in
+      let s = Level.Set.fold Level.Set.add (Instance.levels (EInstance.kind sigma u)) s in
       fold sigma aux s c
     | _ -> fold sigma aux s c
-  in aux LSet.empty c
+  in aux Level.Set.empty c
 
 open Context
 open Environ
@@ -649,6 +648,9 @@ let cast_list : type a b. (a,b) eq -> a list -> b list =
   fun Refl x -> x
 
 let cast_list_snd : type a b. (a,b) eq -> ('c * a) list -> ('c * b) list =
+  fun Refl x -> x
+
+let cast_vect : type a b. (a,b) eq -> a array -> b array =
   fun Refl x -> x
 
 let cast_rel_decl :
@@ -678,6 +680,8 @@ exception LocalOccur
 let to_constr = unsafe_to_constr
 let to_rel_decl = unsafe_to_rel_decl
 
+type instance = t array
+type instance_list = t list
 type substl = t list
 
 (** Operations that commute with evar-normalization *)
@@ -700,6 +704,12 @@ let subst_var subst c = of_constr (Vars.subst_var subst (to_constr c))
 
 let subst_univs_level_constr subst c =
   of_constr (Vars.subst_univs_level_constr subst (to_constr c))
+
+let subst_instance_context subst ctx =
+  cast_rel_context (sym unsafe_eq) (Vars.subst_instance_context subst (cast_rel_context unsafe_eq ctx))
+
+let subst_instance_constr subst c =
+  of_constr (Vars.subst_instance_constr subst (to_constr c))
 
 (** Operations that dot NOT commute with evar-normalization *)
 let noccurn sigma n term =
@@ -727,7 +737,30 @@ let closed0 sigma c = closedn sigma 0 c
 
 let subst_of_rel_context_instance ctx subst =
   cast_list (sym unsafe_eq)
-    (Vars.subst_of_rel_context_instance (cast_rel_context unsafe_eq ctx) (cast_list unsafe_eq subst))
+    (Vars.subst_of_rel_context_instance (cast_rel_context unsafe_eq ctx) (cast_vect unsafe_eq subst))
+let subst_of_rel_context_instance_list ctx subst =
+  cast_list (sym unsafe_eq)
+    (Vars.subst_of_rel_context_instance_list (cast_rel_context unsafe_eq ctx) (cast_list unsafe_eq subst))
+
+let liftn_rel_context n k ctx =
+  cast_rel_context (sym unsafe_eq)
+    (Vars.liftn_rel_context n k (cast_rel_context unsafe_eq ctx))
+
+let lift_rel_context n ctx =
+  cast_rel_context (sym unsafe_eq)
+    (Vars.lift_rel_context n (cast_rel_context unsafe_eq ctx))
+
+let substnl_rel_context subst n ctx =
+  cast_rel_context (sym unsafe_eq)
+    (Vars.substnl_rel_context (cast_list unsafe_eq subst) n (cast_rel_context unsafe_eq ctx))
+
+let substl_rel_context subst ctx =
+  cast_rel_context (sym unsafe_eq)
+    (Vars.substl_rel_context (cast_list unsafe_eq subst) (cast_rel_context unsafe_eq ctx))
+
+let smash_rel_context ctx =
+  cast_rel_context (sym unsafe_eq)
+      (Vars.smash_rel_context (cast_rel_context unsafe_eq ctx))
 
 let esubst : (int -> 'a -> t) -> 'a Esubst.subs -> t -> t =
 match unsafe_eq with

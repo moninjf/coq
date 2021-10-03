@@ -99,7 +99,6 @@ COQMAKE_BOTH_TIME_FILES:=tools/make-both-time-files.py
 COQMAKE_BOTH_SINGLE_TIMING_FILES:=tools/make-both-single-timing-files.py
 VOTOUR:=$(CBIN)/votour$(EXE)
 OCAMLLIBDEP:=$(CBIN)/ocamllibdep$(EXE)
-FAKEIDE:=$(CBIN)/fake_ide$(EXE)
 USERCONTRIBDIRS:=Ltac2
 CHICKEN:=$(CBIN)/coqchk$(EXE)
 TOOLS:=$(VOTOUR) $(COQDOC) $(COQDOCSTY) $(COQDOCCSS) $(COQWC) $(COQMAKEFILE) $(COQMAKEFILEIN) $(COQNATIVE)
@@ -117,7 +116,7 @@ DOCGRAM_SOURCE_FILES=$(shell find $(addprefix $(COQ_SRC_DIR)/, doc/tools/docgram
 # Override for developer build [to get warn-as-error for example]
 _DDISPLAY?=quiet
 _DPROFILE?=$(CONFIGURE_DPROFILE)
-_DOPT:=--display $(_DDISPLAY) --profile=$(_DPROFILE)
+_DOPT:=--display=$(_DDISPLAY) $(_DPROFILE)
 _DBUILD:=$(FLOCK) .dune.lock dune build $(_DOPT)
 
 # We rerun dune when any of the source files have changed

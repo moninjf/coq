@@ -58,7 +58,7 @@ val interp_mutual_inductive_constr
   -> poly:bool
   -> private_ind:bool
   -> finite:Declarations.recursivity_kind
-  -> Entries.mutual_inductive_entry * UnivNames.universe_binders
+  -> Entries.mutual_inductive_entry * UnivNames.universe_binders * Univ.ContextSet.t
 
 (************************************************************************)
 (** Internal API, exported for Record                                   *)
@@ -70,8 +70,8 @@ val should_auto_template : Id.t -> bool -> bool
    inductive under consideration. *)
 
 val template_polymorphism_candidate
-  : ctor_levels:Univ.LSet.t
-  -> Entries.universes_entry
+  : ctor_levels:Univ.Level.Set.t
+  -> UState.universes_entry
   -> Constr.rel_context
   -> Sorts.t option
   -> bool
@@ -92,7 +92,7 @@ val maybe_unify_params_in : Environ.env -> Evd.evar_map -> ninds:int -> nparams:
 val variance_of_entry
   : cumulative:bool
   -> variances:Entries.variance_entry
-  -> Entries.universes_entry
+  -> Entries.inductive_universes_entry
   -> Entries.variance_entry option
 (** Will return None if non-cumulative, and resize if there are more
     universes than originally specified.

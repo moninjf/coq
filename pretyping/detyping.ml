@@ -73,10 +73,10 @@ let return_clause env sigma ind u params (nas, p) =
     let mib = Environ.lookup_mind (fst ind) env in
     let mip = mib.mind_packets.(snd ind) in
     let paramdecl = subst_instance_context u mib.mind_params_ctxt in
-    let paramsubst = subst_of_rel_context_instance paramdecl (Array.to_list params) in
+    let paramsubst = subst_of_rel_context_instance paramdecl params in
     let realdecls, _ = List.chop mip.mind_nrealdecls mip.mind_arity_ctxt in
     let self =
-      let args = Context.Rel.to_extended_vect mkRel 0 mip.mind_arity_ctxt in
+      let args = Context.Rel.instance mkRel 0 mip.mind_arity_ctxt in
       let inst = Instance.of_array (Array.init (Instance.length u) Level.var) in
       mkApp (mkIndU (ind, inst), args)
     in
@@ -95,11 +95,10 @@ let branch env sigma (ind, i) u params (nas, br) =
     let mib = Environ.lookup_mind (fst ind) env in
     let mip = mib.mind_packets.(snd ind) in
     let paramdecl = subst_instance_context u mib.mind_params_ctxt in
-    let paramsubst = subst_of_rel_context_instance paramdecl (Array.to_list params) in
-    let subst = paramsubst @ Inductive.ind_subst (fst ind) mib u in
+    let paramsubst = subst_of_rel_context_instance paramdecl params in
     let (ctx, _) = mip.mind_nf_lc.(i - 1) in
     let ctx, _ = List.chop mip.mind_consnrealdecls.(i - 1) ctx in
-    let ctx = instantiate_context u subst nas ctx in
+    let ctx = instantiate_context u paramsubst nas ctx in
     List.map EConstr.of_rel_decl ctx, br
   with e when CErrors.noncritical e ->
     let dummy na = LocalAssum (na, EConstr.mkProp) in
@@ -564,7 +563,7 @@ let detype_case computable detype detype_eqns avoid env sigma (ci, univs, params
       let t = mkApp (mkIndU (ci.ci_ind,univs), Array.append params indices) in
       DAst.make @@ GCast (tomatch, CastConv (detype t))
   in
-  let alias, aliastyp, pred=
+  let alias, aliastyp, pred =
     if (not !Flags.raw_print) && synth_type && computable && not (Int.equal (Array.length bl) 0)
     then
       Anonymous, None, None
@@ -1071,6 +1070,15 @@ let rec subst_glob_constr env subst = DAst.map (function
       and rl' = List.Smart.map (subst_glob_constr env subst) rl in
         if r' == r && rl' == rl then raw else
           GApp(r',rl')
+
+  | GProj ((cst,u),rl,r) as raw ->
+      let rl' = List.Smart.map (subst_glob_constr env subst) rl
+      and r' = subst_glob_constr env subst r in
+      let ref = GlobRef.ConstRef cst in
+      let ref',t = subst_global subst ref in
+      assert (t = None); (* projection *)
+        if ref' == ref && rl' == rl && r' == r then raw else
+          GProj((destConstRef ref',u),rl',r')
 
   | GLambda (n,bk,r1,r2) as raw ->
       let r1' = subst_glob_constr env subst r1 and r2' = subst_glob_constr env subst r2 in

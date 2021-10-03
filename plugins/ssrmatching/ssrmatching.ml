@@ -336,8 +336,12 @@ let proj_nparams c =
   with Not_found -> 0
 
 let isRigid c = match kind c with
-  | Prod _ | Sort _ | Lambda _ | Case _ | Fix _ | CoFix _ -> true
-  | _ -> false
+  | (Prod _ | Sort _ | Lambda _ | Case _ | Fix _ | CoFix _| Int _
+    | Float _ | Array _) -> true
+  | (Rel _ | Var _ | Meta _ | Evar (_, _) | Cast (_, _, _) | LetIn (_, _, _, _)
+    | App (_, _) | Const (_, _) | Ind ((_, _), _) | Construct (((_, _), _), _)
+    | Proj (_, _)) -> false
+
 
 let hole_var = mkVar (Id.of_string "_")
 let pr_constr_pat env sigma c0 =
@@ -936,7 +940,7 @@ let id_of_cpattern {pattern = (c1, c2); _} =
   match DAst.get c1, c2 with
   | _, Some { v = CRef (qid, _) } when qualid_is_ident qid ->
     Some (qualid_basename qid)
-  | _, Some { v = CAppExpl ((_, qid, _), []) } when qualid_is_ident qid ->
+  | _, Some { v = CAppExpl ((qid, _), []) } when qualid_is_ident qid ->
     Some (qualid_basename qid)
   | GRef (GlobRef.VarRef x, _), None -> Some x
   | _ -> None

@@ -15,6 +15,10 @@
 open Names
 open Univ
 
+type universes_entry =
+| Monomorphic_entry of Univ.ContextSet.t
+| Polymorphic_entry of Univ.UContext.t
+
 exception UniversesDiffer
 
 type t
@@ -56,8 +60,14 @@ val context_set : t -> Univ.ContextSet.t
 (** The local context of the state, i.e. a set of bound variables together
     with their associated constraints. *)
 
+type universe_opt_subst = UnivSubst.universe_opt_subst
+(* Reexport because UnivSubst is private *)
+
 val subst : t -> UnivSubst.universe_opt_subst
 (** The local universes that are unification variables *)
+
+val nf_universes : t -> Constr.t -> Constr.t
+(** Apply the local substitution [subst] *)
 
 val ugraph : t -> UGraph.t
 (** The current graph extended with the local constraints *)
@@ -65,17 +75,19 @@ val ugraph : t -> UGraph.t
 val initial_graph : t -> UGraph.t
 (** The initial graph with just the declarations of new universes. *)
 
-val algebraics : t -> Univ.LSet.t
+val algebraics : t -> Univ.Level.Set.t
 (** The subset of unification variables that can be instantiated with algebraic
     universes as they appear in inferred types only. *)
 
-val constraints : t -> Univ.Constraint.t
+val constraints : t -> Univ.Constraints.t
 (** Shorthand for {!context_set} composed with {!ContextSet.constraints}. *)
 
 val context : t -> Univ.UContext.t
 (** Shorthand for {!context_set} with {!Context_set.to_context}. *)
 
-val univ_entry : poly:bool -> t -> Entries.universes_entry
+type named_universes_entry = universes_entry * UnivNames.universe_binders
+
+val univ_entry : poly:bool -> t -> named_universes_entry
 (** Pick from {!context} or {!context_set} based on [poly]. *)
 
 val universe_binders : t -> UnivNames.universe_binders
@@ -83,7 +95,7 @@ val universe_binders : t -> UnivNames.universe_binders
 
 (** {5 Constraints handling} *)
 
-val add_constraints : t -> Univ.Constraint.t -> t
+val add_constraints : t -> Univ.Constraints.t -> t
 (**
   @raise UniversesDiffer when universes differ
 *)
@@ -104,13 +116,13 @@ val universe_of_name : t -> Id.t -> Univ.Level.t
    the universes in [keep]. The constraints [csts] are adjusted so
    that transitive constraints between remaining universes (those in
    [keep] and those not in [univs]) are preserved. *)
-val restrict_universe_context : lbound:UGraph.Bound.t -> ContextSet.t -> LSet.t -> ContextSet.t
+val restrict_universe_context : lbound:UGraph.Bound.t -> ContextSet.t -> Level.Set.t -> ContextSet.t
 
 (** [restrict uctx ctx] restricts the local universes of [uctx] to
    [ctx] extended by local named universes and side effect universes
    (from [demote_seff_univs]). Transitive constraints between retained
    universes are preserved. *)
-val restrict : t -> Univ.LSet.t -> t
+val restrict : t -> Univ.Level.Set.t -> t
 
 type rigid =
   | UnivRigid
@@ -129,7 +141,7 @@ val demote_global_univs : Environ.env -> t -> t
     that are present in the universe graph in the input env (supposedly the
     global ones) *)
 
-val demote_seff_univs : Univ.LSet.t -> t -> t
+val demote_seff_univs : Univ.Level.Set.t -> t -> t
 (** Mark the universes as not local any more, because they have been
    globally declared by some side effect. You should be using
    emit_side_effects instead. *)
@@ -165,7 +177,7 @@ val is_sort_variable : t -> Sorts.t -> Univ.Level.t option
 
 val normalize_variables : t -> t
 
-val constrain_variables : Univ.LSet.t -> t -> t
+val constrain_variables : Univ.Level.Set.t -> t -> t
 
 val abstract_undefined_variables : t -> t
 
@@ -181,7 +193,7 @@ type ('a, 'b) gen_universe_decl = {
   univdecl_extensible_constraints : bool (* Can new constraints be added *) }
 
 type universe_decl =
-  (lident list, Univ.Constraint.t) gen_universe_decl
+  (lident list, Univ.Constraints.t) gen_universe_decl
 
 val default_univ_decl : universe_decl
 
@@ -190,13 +202,13 @@ val default_univ_decl : universe_decl
    If non extensible in [decl], check that the local universes (resp.
    universe constraints) in [ctx] are implied by [decl].
 
-   Return a [Entries.constant_universes_entry] containing the local
+   Return a [universes_entry] containing the local
    universes of [ctx] and their constraints.
 
    When polymorphic, the universes corresponding to
    [decl.univdecl_instance] come first in the order defined by that
    list. *)
-val check_univ_decl : poly:bool -> t -> universe_decl -> Entries.universes_entry
+val check_univ_decl : poly:bool -> t -> universe_decl -> named_universes_entry
 
 val check_mono_univ_decl : t -> universe_decl -> Univ.ContextSet.t
 
@@ -213,3 +225,5 @@ val qualid_of_level : t -> Univ.Level.t -> Libnames.qualid option
 val id_of_level : t -> Univ.Level.t -> Id.t option
 
 val pr_weak : (Univ.Level.t -> Pp.t) -> t -> Pp.t
+
+val pr_universe_opt_subst : universe_opt_subst -> Pp.t

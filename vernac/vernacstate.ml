@@ -30,9 +30,6 @@ module System : sig
   val freeze : marshallable:bool -> t
   val unfreeze : t -> unit
 
-  val dump : string -> unit
-  val load : string -> unit
-
   module Stm : sig
     val make_shallow : t -> t
     val lib : t -> Lib.frozen
@@ -57,16 +54,6 @@ end = struct
       let reraise = Exninfo.capture reraise in
       (unfreeze st; Exninfo.iraise reraise)
 
-  (* These commands may not be very safe due to ML-side plugin loading
-     etc... use at your own risk *)
-  (* XXX: EJGA: this is ignoring parsing state, it works for now? *)
-  let dump s =
-    System.extern_state Coq_config.state_magic_number s (freeze ~marshallable:true)
-
-  let load s =
-    unfreeze (System.with_magic_number_check (System.intern_state Coq_config.state_magic_number) s);
-    Library.overwrite_library_filenames s
-
   (* STM-specific state manipulations *)
   module Stm = struct
     let make_shallow (lib, summary) = Lib.drop_objects lib, summary
@@ -78,34 +65,27 @@ end
 
 module LemmaStack = struct
 
-  type t = Declare.Proof.t * Declare.Proof.t list
+  type t = Declare.Proof.t NeList.t
 
-  let map ~f (pf, pfl) = (f pf, List.map f pfl)
-  let map_top ~f (pf, pfl) = (f pf, pfl)
+  let map ~f x = NeList.map f x
+  let map_top ~f x = NeList.map_head f x
 
-  let pop (ps, p) = match p with
-    | [] -> ps, None
-    | pp :: p -> ps, Some (pp, p)
+  let pop x = NeList.head x, NeList.tail x
 
-  let with_top (p, _) ~f = f p
+  let get_top = NeList.head
+  let with_top x ~f = f (get_top x)
 
-  let push ontop a =
-    match ontop with
-    | None -> a , []
-    | Some (l,ls) -> a, (l :: ls)
+  let push ontop a = NeList.push a ontop
 
   let get_all_proof_names (pf : t) =
     let prj x = Declare.Proof.get x in
-    let (pn, pns) = map ~f:Proof.(function pf -> (data (prj pf)).name) pf in
-    pn :: pns
+    List.map Proof.(function pf -> (data (prj pf)).name) (NeList.to_list pf)
 
   let copy_info src tgt =
     Declare.Proof.map ~f:(fun _ -> Declare.Proof.get tgt) src
 
   let copy_info ~(src : t) ~(tgt : t) =
-    let (ps, psl), (ts,tsl) = src, tgt in
-    copy_info ps ts,
-    List.map2 (fun op p -> copy_info op p) psl tsl
+    NeList.map2 copy_info src tgt
 
 end
 
@@ -113,18 +93,18 @@ type t = {
   parsing : Parser.t;
   system  : System.t;              (* summary + libstack *)
   lemmas  : LemmaStack.t option;   (* proofs of lemmas currently opened *)
-  program : Declare.OblState.t;    (* obligations table *)
+  program : Declare.OblState.t NeList.t;    (* obligations table *)
   shallow : bool                   (* is the state trimmed down (libstack) *)
 }
 
 let s_cache = ref None
 let s_lemmas = ref None
-let s_program = ref Declare.OblState.empty
+let s_program = ref (NeList.singleton Declare.OblState.empty)
 
 let invalidate_cache () =
   s_cache := None;
   s_lemmas := None;
-  s_program := Declare.OblState.empty
+  s_program := NeList.singleton Declare.OblState.empty
 
 let update_cache rf v =
   rf := Some v; v

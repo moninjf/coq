@@ -58,6 +58,10 @@ val deprecation : Deprecation.t option attribute
 val canonical_field : bool attribute
 val canonical_instance : bool attribute
 val using : string option attribute
+val hint_locality : default:(unit -> Hints.hint_locality) -> Hints.hint_locality attribute
+
+(** With the warning for Hint (and not for Instance etc) *)
+val really_hint_locality : Hints.hint_locality attribute
 
 (** Enable/Disable universe checking *)
 val typing_flags : Declarations.typing_flags option attribute
@@ -94,16 +98,6 @@ val attribute_of_list : (string * 'a key_parser) list -> 'a option attribute
 (** Define boolean attribute [name], of the form [name={yes,no}]. The
    attribute may only be set once for a command. *)
 val bool_attribute : name:string -> bool option attribute
-
-val deprecated_bool_attribute
-  : name:string
-  -> on:string
-  -> off:string
-  -> bool option attribute
-(** Define boolean attribute [name] with will be set when [on] is
-   provided and unset when [off] is provided. The attribute may only
-   be set once for a command; this attribute both accepts the old [on]
-   [off] syntax and new attribute syntax [on=yes] [on=no] *)
 
 val qualify_attribute : string -> 'a attribute -> 'a attribute
 (** [qualified_attribute qual att] treats [#[qual(atts)]] like [att]

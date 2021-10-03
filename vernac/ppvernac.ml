@@ -559,8 +559,8 @@ let pr_printable = function
     keyword "Print Custom Grammar" ++ spc() ++ str ent
   | PrintLoadPath dir ->
     keyword "Print LoadPath" ++ pr_opt DirPath.print dir
-  | PrintModules ->
-    keyword "Print Modules"
+  | PrintLibraries ->
+    keyword "Print Libraries"
   | PrintMLLoadPath ->
     keyword "Print ML Path"
   | PrintMLModules ->
@@ -727,12 +727,6 @@ let pr_vernac_expr v =
       if Int.equal i 1 then keyword "Back" else keyword "Back" ++ pr_intarg i
     )
 
-  (* State management *)
-  | VernacWriteState s ->
-    return (keyword "Write State" ++ spc () ++ qs s)
-  | VernacRestoreState s ->
-    return  (keyword "Restore State" ++ spc() ++ qs s)
-
   (* Syntax *)
   | VernacOpenCloseScope (opening,sc) ->
     return (
@@ -757,22 +751,14 @@ let pr_vernac_expr v =
       keyword "Bind Scope" ++ spc () ++ str sc ++
       spc() ++ keyword "with" ++ spc () ++ prlist_with_sep spc pr_class_rawexpr cll
     )
-  | VernacInfix (({v=s},mv),q,sn) -> (* A Verifier *)
+  | VernacNotation (infix,c,({v=s},l),opt) ->
     return (
-      hov 0 (hov 0 (keyword "Infix "
-                    ++ qs s ++ str " :=" ++ pr_constrarg q) ++
-             pr_syntax_modifiers mv ++
-             (match sn with
-              | None -> mt()
-              | Some sc -> spc() ++ str":" ++ spc() ++ str sc))
-    )
-  | VernacNotation (c,({v=s},l),opt) ->
-    return (
-      hov 2 (keyword "Notation" ++ spc() ++ qs s ++
-             str " :=" ++ Flags.without_option Flags.beautify pr_constrarg c ++ pr_syntax_modifiers l ++
+      hov 2 (hov 0 (keyword (if infix then "Infix" else "Notation") ++ spc() ++ qs s ++
+             str " :=" ++ Flags.without_option Flags.beautify pr_constrarg c) ++
+             pr_syntax_modifiers l ++
              (match opt with
               | None -> mt()
-              | Some sc -> str" :" ++ spc() ++ str sc))
+              | Some sc -> spc() ++ str":" ++ spc() ++ str sc))
     )
   | VernacReservedNotation (_, (s, l)) ->
     return (
@@ -1056,9 +1042,6 @@ let pr_vernac_expr v =
       hov 2 (keyword "Include" ++ spc() ++
              prlist_with_sep (fun () -> str " <+ ") pr_m mexprs)
     )
-  (* Solving *)
-  | VernacSolveExistential (i,c) ->
-    return (keyword "Existential" ++ spc () ++ int i ++ pr_lconstrarg c)
 
   (* Auxiliary file and library management *)
   | VernacAddLoadPath { implicit; physical_path; logical_path } ->
@@ -1141,8 +1124,8 @@ let pr_vernac_expr v =
                       notation_scope = s;
                       implicit_status = imp } :: tl ->
             let extra, tl = get_arguments_like s imp tl in
-            spc() ++ pr_br imp (extra<>[]) (prlist_with_sep spc pr_one_arg ((id,k)::extra)) ++
-            pr_s s ++ print_arguments tl
+            spc() ++ hov 1 (pr_br imp (extra<>[]) (prlist_with_sep spc pr_one_arg ((id,k)::extra)) ++
+            pr_s s) ++ print_arguments tl
         in
         let rec print_implicits = function
           | [] -> mt ()
@@ -1327,7 +1310,9 @@ let pr_control_flag (p : control_flag) =
     | ControlTime _ -> keyword "Time"
     | ControlRedirect s -> keyword "Redirect" ++ spc() ++ qs s
     | ControlTimeout n -> keyword "Timeout " ++ int n
-    | ControlFail -> keyword "Fail" in
+    | ControlFail -> keyword "Fail"
+    | ControlSucceed -> keyword "Succeed"
+  in
   w ++ spc ()
 
 let pr_vernac_control flags = Pp.prlist pr_control_flag flags

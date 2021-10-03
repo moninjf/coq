@@ -380,6 +380,7 @@ let glob_prim_constr_key c = match DAst.get c with
     | GRef (ref, _) -> Some (canonical_gr ref)
     | _ -> None
     end
+  | GProj ((cst,_), _, _) -> Some (canonical_gr (GlobRef.ConstRef cst))
   | _ -> None
 
 let glob_constr_keys c = match DAst.get c with
@@ -388,6 +389,7 @@ let glob_constr_keys c = match DAst.get c with
     | GRef (ref, _) -> [RefKey (canonical_gr ref); Oth]
     | _ -> [Oth]
     end
+  | GProj ((cst,_), _, _) -> [RefKey (canonical_gr (GlobRef.ConstRef cst))]
   | GRef (ref,_) -> [RefKey (canonical_gr ref)]
   | _ -> [Oth]
 
@@ -397,6 +399,7 @@ let cases_pattern_key c = match DAst.get c with
 
 let notation_constr_key = function (* Rem: NApp(NRef ref,[]) stands for @ref *)
   | NApp (NRef (ref,_),args) -> RefKey(canonical_gr ref), AppBoundedNotation (List.length args)
+  | NProj ((cst,_),args,_) -> RefKey(canonical_gr (GlobRef.ConstRef cst)), AppBoundedNotation (List.length args + 1)
   | NList (_,_,NApp (NRef (ref,_),args),_,_)
   | NBinderList (_,_,NApp (NRef (ref,_),args),_,_) ->
       RefKey (canonical_gr ref), AppBoundedNotation (List.length args)
@@ -552,6 +555,7 @@ type target_kind =
   | UInt of int_ty (* Coq.Init.Number.uint *)
   | Z of z_pos_ty (* Coq.Numbers.BinNums.Z and positive *)
   | Int63 of pos_neg_int63_ty (* Coq.Numbers.Cyclic.Int63.PrimInt63.pos_neg_int63 *)
+  | Float64 (* Coq.Floats.PrimFloat.float *)
   | Number of number_ty (* Coq.Init.Number.number + uint + int *)
 
 type string_target_kind =
@@ -576,7 +580,7 @@ type 'target conversion_kind = 'target * option_kind
    [ToPostCheck r] behaves as [ToPostCopy] except in the reverse
    translation which fails if the copied term is not [r].
    When [n] is null, no translation is performed. *)
-type to_post_arg = ToPostCopy | ToPostAs of int | ToPostHole | ToPostCheck of GlobRef.t
+type to_post_arg = ToPostCopy | ToPostAs of int | ToPostHole | ToPostCheck of Constr.t
 type ('target, 'warning) prim_token_notation_obj =
   { to_kind : 'target conversion_kind;
     to_ty : GlobRef.t;
@@ -629,7 +633,7 @@ exception NotAValidPrimToken
     what it means for a term to be ground / to be able to be
     considered for parsing. *)
 
-let constr_of_globref allow_constant env sigma = function
+let constr_of_globref ?(allow_constant=true) env sigma = function
   | GlobRef.ConstructRef c ->
      let sigma,c = Evd.fresh_constructor_instance env sigma c in
      sigma,mkConstructU c
@@ -641,17 +645,49 @@ let constr_of_globref allow_constant env sigma = function
      sigma,mkConstU c
   | _ -> raise NotAValidPrimToken
 
-let rec constr_of_glob allow_constant to_post post env sigma g = match DAst.get g with
+(** [check_glob g c] checks that glob [g] is equal to constr [c]
+    and returns [g] as a constr (with fresh universe instances)
+    or raises [NotAValidPrimToken]. *)
+let rec check_glob env sigma g c = match DAst.get g, Constr.kind c with
+  | Glob_term.GRef (GlobRef.ConstructRef c as g, _), Constr.Construct (c', _)
+       when Construct.CanOrd.equal c c' -> constr_of_globref env sigma g
+  | Glob_term.GRef (GlobRef.IndRef c as g, _), Constr.Ind (c', _)
+       when Ind.CanOrd.equal c c' -> constr_of_globref env sigma g
+  | Glob_term.GRef (GlobRef.ConstRef c as g, _), Constr.Const (c', _)
+       when Constant.CanOrd.equal c c' -> constr_of_globref env sigma g
+  | Glob_term.GApp (gc, gcl), Constr.App (gc', gc'a) ->
+     let sigma,c = check_glob env sigma gc gc' in
+     let sigma,cl =
+       try List.fold_left2_map (check_glob env) sigma gcl (Array.to_list gc'a)
+       with Invalid_argument _ -> raise NotAValidPrimToken in
+     sigma, mkApp (c, Array.of_list cl)
+  | Glob_term.GInt i, Constr.Int i' when Uint63.equal i i' -> sigma, mkInt i
+  | Glob_term.GFloat f, Constr.Float f' when Float64.equal f f' -> sigma, mkFloat f
+  | Glob_term.GArray (_,t,def,ty), Constr.Array (_,t',def',ty') ->
+     let sigma,u = Evd.fresh_array_instance env sigma in
+     let sigma,def = check_glob env sigma def def' in
+     let sigma,t =
+       try Array.fold_left2_map (check_glob env) sigma t t'
+       with Invalid_argument _ -> raise NotAValidPrimToken in
+     let sigma,ty = check_glob env sigma ty ty' in
+     sigma, mkArray (u,t,def,ty)
+  | Glob_term.GSort s, Constr.Sort s' ->
+     let sigma,s = Evd.fresh_sort_in_family sigma (Glob_ops.glob_sort_family s) in
+     if not (Sorts.equal s s') then raise NotAValidPrimToken;
+     sigma,mkSort s
+  | _ -> raise NotAValidPrimToken
+
+let rec constr_of_glob to_post post env sigma g = match DAst.get g with
   | Glob_term.GRef (r, _) ->
       let o = List.find_opt (fun (_,r',_) -> GlobRef.equal r r') post in
       begin match o with
-      | None -> constr_of_globref allow_constant env sigma r
+      | None -> constr_of_globref ~allow_constant:false env sigma r
       | Some (r, _, a) ->
          (* [g] is not a GApp so check that [post]
             does not expect any actual argument
             (i.e., [a] contains only ToPostHole since they mean "ignore arg") *)
          if List.exists ((<>) ToPostHole) a then raise NotAValidPrimToken;
-         constr_of_globref true env sigma r
+         constr_of_globref env sigma r
       end
   | Glob_term.GApp (gc, gcl) ->
       let o = match DAst.get gc with
@@ -659,26 +695,23 @@ let rec constr_of_glob allow_constant to_post post env sigma g = match DAst.get 
         | _ -> None in
       begin match o with
       | None ->
-         let sigma,c = constr_of_glob allow_constant to_post post env sigma gc in
-         let sigma,cl = List.fold_left_map (constr_of_glob allow_constant to_post post env) sigma gcl in
+         let sigma,c = constr_of_glob to_post post env sigma gc in
+         let sigma,cl = List.fold_left_map (constr_of_glob to_post post env) sigma gcl in
          sigma,mkApp (c, Array.of_list cl)
       | Some (r, _, a) ->
-         let sigma,c = constr_of_globref true env sigma r in
+         let sigma,c = constr_of_globref env sigma r in
          let rec aux sigma a gcl = match a, gcl with
            | [], [] -> sigma,[]
            | ToPostCopy :: a, gc :: gcl ->
-              let sigma,c = constr_of_glob allow_constant [||] [] env sigma gc in
+              let sigma,c = constr_of_glob [||] [] env sigma gc in
               let sigma,cl = aux sigma a gcl in
               sigma, c :: cl
            | ToPostCheck r :: a, gc :: gcl ->
-              let () = match DAst.get gc with
-                | Glob_term.GRef (r', _) when GlobRef.equal r r' -> ()
-                | _ -> raise NotAValidPrimToken in
-              let sigma,c = constr_of_glob true [||] [] env sigma gc in
+              let sigma,c = check_glob env sigma gc r in
               let sigma,cl = aux sigma a gcl in
               sigma, c :: cl
            | ToPostAs i :: a, gc :: gcl ->
-              let sigma,c = constr_of_glob allow_constant to_post to_post.(i) env sigma gc in
+              let sigma,c = constr_of_glob to_post to_post.(i) env sigma gc in
               let sigma,cl = aux sigma a gcl in
               sigma, c :: cl
            | ToPostHole :: post, _ :: gcl -> aux sigma post gcl
@@ -691,9 +724,9 @@ let rec constr_of_glob allow_constant to_post post env sigma g = match DAst.get 
   | Glob_term.GFloat f -> sigma, mkFloat f
   | Glob_term.GArray (_,t,def,ty) ->
       let sigma, u' = Evd.fresh_array_instance env sigma in
-      let sigma, def' = constr_of_glob allow_constant to_post post env sigma def in
-      let sigma, t' = Array.fold_left_map (constr_of_glob allow_constant to_post post env) sigma t in
-      let sigma, ty' = constr_of_glob allow_constant to_post post env sigma ty in
+      let sigma, def' = constr_of_glob to_post post env sigma def in
+      let sigma, t' = Array.fold_left_map (constr_of_glob to_post post env) sigma t in
+      let sigma, ty' = constr_of_glob to_post post env sigma ty in
        sigma, mkArray (u',t',def',ty')
   | Glob_term.GSort gs ->
       let sigma,c = Evd.fresh_sort_in_family sigma (Glob_ops.glob_sort_family gs) in
@@ -703,7 +736,7 @@ let rec constr_of_glob allow_constant to_post post env sigma g = match DAst.get 
 
 let constr_of_glob to_post env sigma (Glob_term.AnyGlobConstr g) =
   let post = match to_post with [||] -> [] | _ -> to_post.(0) in
-  constr_of_glob false to_post post env sigma g
+  constr_of_glob to_post post env sigma g
 
 let rec glob_of_constr token_kind ?loc env sigma c = match Constr.kind c with
   | App (c, ca) ->
@@ -1020,6 +1053,58 @@ let interp_int63 ?loc ind n =
   then coqpos_neg_int63_of_bigint ?loc ind (sign,an)
   else error_overflow ?loc n
 
+let warn_inexact_float =
+  CWarnings.create ~name:"inexact-float" ~category:"parsing"
+    (fun (sn, f) ->
+      Pp.strbrk
+        (Printf.sprintf
+           "The constant %s is not a binary64 floating-point value. \
+            A closest value %s will be used and unambiguously printed %s."
+           sn (Float64.to_hex_string f) (Float64.to_string f)))
+
+let interp_float64 ?loc n =
+  let sn = NumTok.Signed.to_string n in
+  let f = Float64.of_string sn in
+  (* return true when f is not exactly equal to n,
+     this is only used to decide whether or not to display a warning
+     and does not play any actual role in the parsing *)
+  let inexact () = match Float64.classify f with
+    | Float64.(PInf | NInf | NaN) -> true
+    | Float64.(PZero | NZero) -> not (NumTok.Signed.is_zero n)
+    | Float64.(PNormal | NNormal | PSubn | NSubn) ->
+       let m, e =
+         let (_, i), f, e = NumTok.Signed.to_int_frac_and_exponent n in
+         let i = NumTok.UnsignedNat.to_string i in
+         let f = match f with
+           | None -> "" | Some f -> NumTok.UnsignedNat.to_string f in
+         let e = match e with
+           | None -> "0" | Some e -> NumTok.SignedNat.to_string e in
+         Z.of_string (i ^ f),
+         (try int_of_string e with Failure _ -> 0) - String.length f in
+       let m', e' =
+         let m', e' = Float64.frshiftexp f in
+         let m' = Float64.normfr_mantissa m' in
+         let e' = Uint63.to_int_min e' 4096 - Float64.eshift - 53 in
+         Z.of_string (Uint63.to_string m'),
+         e' in
+       let c2, c5 = Z.(of_int 2, of_int 5) in
+       (* check m*5^e <> m'*2^e' *)
+       let check m e m' e' =
+         not (Z.(equal (mul m (pow c5 e)) (mul m' (pow c2 e')))) in
+       (* check m*5^e*2^e' <> m' *)
+       let check' m e e' m' =
+         not (Z.(equal (mul (mul m (pow c5 e)) (pow c2 e')) m')) in
+       (* we now have to check m*10^e <> m'*2^e' *)
+       if e >= 0 then
+         if e <= e' then check m e m' (e' - e)
+         else check' m e (e - e') m'
+       else  (* e < 0 *)
+         if e' <= e then check m' (-e) m (e - e')
+         else check' m' (-e) (e' - e) m in
+  if NumTok.(Signed.classify n = CDec) && inexact () then
+    warn_inexact_float ?loc (sn, f);
+  mkFloat f
+
 let bigint_of_int63 c =
   match Constr.kind c with
   | Int i -> Z.of_int64 (Uint63.to_int64 i)
@@ -1032,6 +1117,18 @@ let bigint_of_coqpos_neg_int63 c =
       | Construct ((_,1), _) (* Pos *) -> bigint_of_int63 c'
       | Construct ((_,2), _) (* Neg *) -> Z.neg (bigint_of_int63 c')
       | _ -> raise NotAValidPrimToken)
+  | _ -> raise NotAValidPrimToken
+
+let get_printing_float = Goptions.declare_bool_option_and_ref
+    ~depr:false
+    ~key:["Printing";"Float"]
+    ~value:true
+
+let uninterp_float64 c =
+  match Constr.kind c with
+  | Float f when not (Float64.is_infinity f || Float64.is_neg_infinity f
+                      || Float64.is_nan f) && get_printing_float () ->
+     NumTok.Signed.of_string (Float64.to_string f)
   | _ -> raise NotAValidPrimToken
 
 let interp o ?loc n =
@@ -1051,6 +1148,7 @@ let interp o ?loc n =
        interp_int63 ?loc pos_neg_int63_ty.pos_neg_int63_ty (NumTok.SignedNat.to_bigint n)
     | (Int _ | UInt _ | Z _ | Int63 _), _ ->
        no_such_prim_token "number" ?loc o.ty_name
+    | Float64, _ -> interp_float64 ?loc n
     | Number number_ty, _ -> coqnumber_of_rawnum number_ty n
   in
   let env = Global.env () in
@@ -1075,6 +1173,7 @@ let uninterp o n =
       | (UInt _, c) -> NumTok.Signed.of_nat (rawnum_of_coquint c)
       | (Z _, c) -> NumTok.Signed.of_bigint CDec (bigint_of_z c)
       | (Int63 _, c) -> NumTok.Signed.of_bigint CDec (bigint_of_coqpos_neg_int63 c)
+      | (Float64, c) -> uninterp_float64 c
       | (Number _, c) -> rawnum_of_coqnumber c
     end o n
 end

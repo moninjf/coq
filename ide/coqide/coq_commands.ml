@@ -103,7 +103,6 @@ let commands = [
    "Require Export";
    "Require Import";
    "Reset Extraction Inline";
-   "Restore State";
    ];
   [  "Scheme";
      "Section";
@@ -152,7 +151,6 @@ let commands = [
   ["Variable";
    "Variant";
    "Variables";];
-  ["Write State";];
 ]
 
 let state_preserving = [
@@ -186,7 +184,7 @@ let state_preserving = [
   "Print ML Path";
   "Print Module";
   "Print Module Type";
-  "Print Modules";
+  "Print Libraries";
   "Print Proof";
   "Print Rewrite HintDb";
   "Print Setoids";

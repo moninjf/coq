@@ -229,15 +229,14 @@ let add_rec_path ~unix_path ~coq_root =
     Feedback.msg_warning (str "Cannot open " ++ str unix_path)
 
 let init_load_path_std () =
-  let () = Envars.set_coqlib ~fail:(fun x -> CErrors.user_err Pp.(str x)) in
-  let ( / ) = Filename.concat in
-  let coqlib = Envars.coqlib () in
-  let user_contrib = coqlib/"user-contrib" in
+  let env = Boot.Env.init () in
+  let stdlib = Boot.Env.stdlib env |> Boot.Path.to_string in
+  let user_contrib = Boot.Env.user_contrib env |> Boot.Path.to_string in
   let xdg_dirs = Envars.xdg_dirs in
   let coqpath = Envars.coqpath in
   (* NOTE: These directories are searched from last to first *)
   (* first standard library *)
-  add_rec_path ~unix_path:(coqlib/"theories") ~coq_root:(Names.DirPath.make[coq_root]);
+  add_rec_path ~unix_path:stdlib ~coq_root:(Names.DirPath.make[coq_root]);
   (* then user-contrib *)
   if Sys.file_exists user_contrib then
     add_rec_path ~unix_path:user_contrib ~coq_root:Loadpath.default_root_prefix;
@@ -284,6 +283,42 @@ let compile senv ~in_file =
   let out_vo = Filename.(remove_extension in_file) ^ ".vo" in
   Library.save_library_to (Safe_typing.env_of_safe_env senv) dir out_vo modl
 
+module Usage :
+sig
+  val usage : unit -> 'a
+end =
+struct
+
+let print_usage_channel co command =
+  output_string co command;
+  output_string co "coqnative options are:\n";
+  output_string co
+"  -Q dir coqdir          map physical dir to logical coqdir\
+\n  -R dir coqdir          synonymous for -Q\
+\n\
+\n\
+\n  -boot                  boot mode\
+\n  -coqlib dir            set coqnative's standard library location\
+\n  -native-output-dir     <directory> set the output directory for native objects\
+\n  -nI dir                OCaml include directories for the native compiler (default if not set) \
+\n\
+\n  -h, --help             print this list of options\
+\n"
+
+(* print the usage on standard error *)
+
+let print_usage = print_usage_channel stderr
+
+let print_usage_coqnative () =
+  print_usage "Usage: coqnative <options> file\n\n"
+
+let usage () =
+  print_usage_coqnative ();
+  flush stderr;
+  exit 1
+
+end
+
 type opts = {
   boot : bool;
   vo_path : (string * DirPath.t) list;
@@ -314,8 +349,9 @@ let rec parse_args (args : string list) accu =
   | "-coqlib" :: s :: rem ->
     if not (Minisys.exists_dir s) then
       fatal_error (str "Directory '" ++ str s ++ str "' does not exist") false;
-    Envars.set_user_coqlib s;
+    Boot.Env.set_coqlib s;
     parse_args rem accu
+  | ("-?"|"-h"|"-H"|"-help"|"--help") :: _ -> Usage.usage ()
   | [file] ->
     accu, file
   | args ->

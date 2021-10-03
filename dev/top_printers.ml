@@ -224,12 +224,12 @@ let ppuni u = pp(Universe.pr u)
 let ppuni_level u = pp (Level.pr u)
 
 let prlev = UnivNames.pr_with_global_universes Id.Map.empty
-let ppuniverse_set l = pp (LSet.pr prlev l)
+let ppuniverse_set l = pp (Level.Set.pr prlev l)
 let ppuniverse_instance l = pp (Instance.pr prlev l)
 let ppuniverse_context l = pp (pr_universe_context prlev l)
 let ppuniverse_context_set l = pp (pr_universe_context_set prlev l)
 let ppuniverse_subst l = pp (Univ.pr_universe_subst l)
-let ppuniverse_opt_subst l = pp (UnivSubst.pr_universe_opt_subst l)
+let ppuniverse_opt_subst l = pp (UState.pr_universe_opt_subst l)
 let ppuniverse_level_subst l = pp (Univ.pr_universe_level_subst l)
 let ppevar_universe_context l = pp (Termops.pr_evar_universe_context l)
 let ppconstraints c = pp (pr_constraints Level.pr c)
@@ -244,14 +244,14 @@ let ppnamedcontextval e =
   pp (pr_named_context env sigma (named_context_of_val e))
 
 let ppaucontext auctx =
-  let nas = AUContext.names auctx in
+  let nas = AbstractContext.names auctx in
   let prlev l = match Level.var_index l with
     | Some n -> (match nas.(n) with
         | Anonymous -> prlev l
         | Name id -> Id.print id)
     | None -> prlev l
   in
-  pp (pr_universe_context prlev (AUContext.repr auctx))
+  pp (pr_universe_context prlev (AbstractContext.repr auctx))
 
 
 let ppenv e = pp
@@ -573,7 +573,7 @@ let _ =
   let open Vernacextend in
   let ty_constr = Extend.TUentry (get_arg_tag Stdarg.wit_constr) in
   let cmd_sig = TyTerminal("PrintConstr", TyNonTerminal(ty_constr, TyNil)) in
-  let cmd_fn c ?loc:_ ~atts () = VtDefault (fun () -> in_current_context econstr_display c) in
+  let cmd_fn c ?loc:_ ~atts () = vtdefault (fun () -> in_current_context econstr_display c) in
   let cmd_class _ = VtQuery in
   let cmd : ty_ml = TyML (false, cmd_sig, cmd_fn, Some cmd_class) in
   vernac_extend ~command:"PrintConstr" [cmd]
@@ -582,7 +582,7 @@ let _ =
   let open Vernacextend in
   let ty_constr = Extend.TUentry (get_arg_tag Stdarg.wit_constr) in
   let cmd_sig = TyTerminal("PrintPureConstr", TyNonTerminal(ty_constr, TyNil)) in
-  let cmd_fn c ?loc:_ ~atts () = VtDefault (fun () -> in_current_context print_pure_econstr c) in
+  let cmd_fn c ?loc:_ ~atts () = vtdefault (fun () -> in_current_context print_pure_econstr c) in
   let cmd_class _ = VtQuery in
   let cmd : ty_ml = TyML (false, cmd_sig, cmd_fn, Some cmd_class) in
   vernac_extend ~command:"PrintPureConstr" [cmd]

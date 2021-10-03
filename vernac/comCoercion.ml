@@ -86,7 +86,7 @@ let check_target clt = function
 
 let uniform_cond sigma ctx lt =
   List.for_all2eq (EConstr.eq_constr sigma)
-    lt (Context.Rel.to_extended_list EConstr.mkRel 0 ctx)
+    lt (Context.Rel.instance_list EConstr.mkRel 0 ctx)
 
 let class_of_global = function
   | GlobRef.ConstRef sp ->
@@ -188,13 +188,13 @@ let build_id_coercion idf_opt source poly =
   let val_f =
     it_mkLambda_or_LetIn
       (mkLambda (make_annot (Name Namegen.default_dependent_ident) Sorts.Relevant,
-                 applistc vs (Context.Rel.to_extended_list mkRel 0 lams),
+                 applistc vs (Context.Rel.instance_list mkRel 0 lams),
                  mkRel 1))
        lams
   in
   let typ_f =
     List.fold_left (fun d c -> Term.mkProd_wo_LetIn c d)
-      (mkProd (make_annot Anonymous Sorts.Relevant, applistc vs (Context.Rel.to_extended_list mkRel 0 lams), lift 1 t))
+      (mkProd (make_annot Anonymous Sorts.Relevant, applistc vs (Context.Rel.instance_list mkRel 0 lams), lift 1 t))
       lams
   in
   (* juste pour verification *)
@@ -251,6 +251,9 @@ let discharge_coercion (_, c) =
     } in
     Some nc
 
+let rebuild_coercion c =
+  { c with coe_typ = fst (Typeops.type_of_global_in_context (Global.env ()) c.coe_value) }
+
 let classify_coercion obj =
   if obj.coe_local then Dispose else Substitute obj
 
@@ -260,9 +263,10 @@ let inCoercion : coe_info_typ -> obj =
     cache_function = cache_coercion;
     subst_function = (fun (subst,c) -> subst_coercion subst c);
     classify_function = classify_coercion;
-    discharge_function = discharge_coercion }
+    discharge_function = discharge_coercion;
+    rebuild_function = rebuild_coercion }
 
-let declare_coercion coef ?(local = false) ~isid ~src:cls ~target:clt ~params:ps () =
+let declare_coercion coef typ ?(local = false) ~isid ~src:cls ~target:clt ~params:ps () =
   let isproj =
     match coef with
     | GlobRef.ConstRef c -> Structures.PrimitiveProjections.find_opt c
@@ -270,6 +274,7 @@ let declare_coercion coef ?(local = false) ~isid ~src:cls ~target:clt ~params:ps
   in
   let c = {
     coe_value = coef;
+    coe_typ = typ;
     coe_local = local;
     coe_is_identity = isid;
     coe_is_projection = isproj;
@@ -327,7 +332,7 @@ let add_new_coercion_core coef stre poly source target isid : unit =
   | `LOCAL -> true
   | `GLOBAL -> false
   in
-  declare_coercion coef ~local ~isid ~src:cls ~target:clt ~params:(List.length lvs) ()
+  declare_coercion coef t ~local ~isid ~src:cls ~target:clt ~params:(List.length lvs) ()
 
 
 let try_add_new_coercion_core ref ~local c d e f =

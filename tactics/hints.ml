@@ -177,6 +177,8 @@ type 'a hints_transparency_target =
 
 type import_level = HintLax | HintWarn | HintStrict
 
+let hint_as_term h = (h.hint_uctx, h.hint_term)
+
 let warn_hint_to_string = function
 | HintLax -> "Lax"
 | HintWarn -> "Warn"
@@ -239,33 +241,33 @@ type stored_data = int * full_hint
 module Bounded_net :
 sig
   type t
-  val empty : t
-  val add : TransparentState.t option -> t -> Pattern.constr_pattern -> stored_data -> t
-  val lookup : Environ.env -> Evd.evar_map -> TransparentState.t option -> t -> EConstr.constr -> stored_data list
+  val empty : TransparentState.t option -> t
+  val add : t -> Pattern.constr_pattern -> stored_data -> t
+  val lookup : Environ.env -> Evd.evar_map -> t -> EConstr.constr -> stored_data list
 end =
 struct
   module Data = struct type t = stored_data let compare = pri_order_int end
   module Bnet = Btermdn.Make(Data)
 
   type diff = Pattern.constr_pattern * stored_data
-  type data = Bnet of Bnet.t | Diff of diff * data ref
+  type data = Bnet of (TransparentState.t option * Bnet.t) | Diff of diff * data ref
   type t = data ref
 
-  let empty = ref (Bnet Bnet.empty)
+  let empty st = ref (Bnet (st, Bnet.empty))
 
-  let add _st net p v = ref (Diff ((p, v), net))
+  let add net p v = ref (Diff ((p, v), net))
 
-  let rec force env st net = match !net with
+  let rec force env net = match !net with
   | Bnet dn -> dn
   | Diff ((p, v), rem) ->
-    let dn = force env st rem in
+    let st, dn = force env rem in
     let p = Bnet.pattern env st p in
     let dn = Bnet.add dn p v in
-    let () = net := (Bnet dn) in
-    dn
+    let () = net := (Bnet (st, dn)) in
+    st, dn
 
-  let lookup env sigma st net p =
-    let dn = force env st net in
+  let lookup env sigma net p =
+    let st, dn = force env net in
     Bnet.lookup env sigma st dn p
 end
 
@@ -276,10 +278,10 @@ type search_entry = {
   sentry_mode : hint_mode array list;
 }
 
-let empty_se = {
+let empty_se st = {
   sentry_nopat = [];
   sentry_pat = [];
-  sentry_bnet = Bounded_net.empty;
+  sentry_bnet = Bounded_net.empty st;
   sentry_mode = [];
 }
 
@@ -290,30 +292,25 @@ let add_tac pat t se =
   | None ->
     if List.exists (eq_pri_auto_tactic t) se.sentry_nopat then se
     else { se with sentry_nopat = List.insert pri_order t se.sentry_nopat }
-  | Some (st, pat) ->
+  | Some pat ->
     if List.exists (eq_pri_auto_tactic t) se.sentry_pat then se
     else { se with
         sentry_pat = List.insert pri_order t se.sentry_pat;
-        sentry_bnet = Bounded_net.add st se.sentry_bnet pat t; }
+        sentry_bnet = Bounded_net.add se.sentry_bnet pat t; }
 
 let rebuild_dn st se =
   let dn' =
     List.fold_left
       (fun dn (id, t) ->
-        Bounded_net.add (Some st) dn (Option.get t.pat) (id, t))
-      Bounded_net.empty se.sentry_pat
+        Bounded_net.add dn (Option.get t.pat) (id, t))
+      (Bounded_net.empty st) se.sentry_pat
   in
   { se with sentry_bnet = dn' }
 
-let lookup_tacs env sigma concl st se =
-  let l'  = Bounded_net.lookup env sigma st se.sentry_bnet concl in
+let lookup_tacs env sigma concl se =
+  let l' = Bounded_net.lookup env sigma se.sentry_bnet concl in
   let sl' = List.stable_sort pri_order_int l' in
   List.merge pri_order_int se.sentry_nopat sl'
-
-let is_transparent_gr ts = let open GlobRef in function
-  | VarRef id -> TransparentState.is_transparent_variable ts id
-  | ConstRef cst -> TransparentState.is_transparent_constant ts cst
-  | IndRef _ | ConstructRef _ -> false
 
 let strip_params env sigma c =
   match EConstr.kind sigma c with
@@ -339,7 +336,7 @@ let merge_context_set_opt sigma ctx = match ctx with
 let instantiate_hint env sigma p =
   let mk_clenv (c, cty, ctx) =
     let sigma = merge_context_set_opt sigma ctx in
-    let cl = mk_clenv_from_env env sigma None (c,cty) in
+    let cl = mk_clenv_from env sigma (c,cty) in
     let templval = { cl.templval with rebus = strip_params env sigma cl.templval.rebus } in
     let cl = mk_clausenv empty_env cl.evd templval cl.templtyp in
     { hint_term = c; hint_type = cty; hint_uctx = ctx; hint_clnv = cl; }
@@ -527,8 +524,6 @@ type t
 val empty : ?name:hint_db_name -> TransparentState.t -> bool -> t
 val map_none : secvars:Id.Pred.t -> t -> full_hint list
 val map_all : secvars:Id.Pred.t -> GlobRef.t -> t -> full_hint list
-val map_existential : evar_map -> secvars:Id.Pred.t ->
-                      (GlobRef.t * constr array) -> constr -> t -> full_hint list with_mode
 val map_eauto : Environ.env -> evar_map -> secvars:Id.Pred.t ->
                 (GlobRef.t * constr array) -> constr -> t -> full_hint list with_mode
 val map_auto : Environ.env -> evar_map -> secvars:Id.Pred.t ->
@@ -577,9 +572,11 @@ struct
                           hintdb_nopat = [];
                           hintdb_name = name; }
 
+  let dn_ts db = if db.use_dn then (Some db.hintdb_state) else None
+
   let find key db =
     try GlobRef.Map.find key db.hintdb_map
-    with Not_found -> empty_se
+    with Not_found -> empty_se (dn_ts db)
 
   let realize_tac secvars (id,tac) =
     if Id.Pred.subset tac.secvars secvars then Some tac
@@ -628,22 +625,14 @@ struct
   (* Precondition: concl has no existentials *)
   let map_auto env sigma ~secvars (k,args) concl db =
     let se = find k db in
-    let st = if db.use_dn then  (Some db.hintdb_state) else None in
-    let pat = lookup_tacs env sigma concl st se in
+    let pat = lookup_tacs env sigma concl se in
     merge_entry secvars db [] pat
-
-  let map_existential sigma ~secvars (k,args) concl db =
-    let se = find k db in
-      if matches_modes sigma args se.sentry_mode then
-        ModeMatch (merge_entry secvars db se.sentry_nopat se.sentry_pat)
-      else ModeMismatch
 
   (* [c] contains an existential *)
   let map_eauto env sigma ~secvars (k,args) concl db =
     let se = find k db in
       if matches_modes sigma args se.sentry_mode then
-        let st = if db.use_dn then Some db.hintdb_state else None in
-        let pat = lookup_tacs env sigma concl st se in
+        let pat = lookup_tacs env sigma concl se in
         ModeMatch (merge_entry secvars db [] pat)
       else ModeMismatch
 
@@ -651,18 +640,9 @@ struct
     | Give_exact _ -> true
     | _ -> false
 
-  let is_unfold = function
-    | Unfold_nth _ -> true
-    | _ -> false
-
   let addkv gr id v db =
     let idv = id, { v with db = db.hintdb_name } in
-    let k = match gr with
-      | Some gr -> if db.use_dn && is_transparent_gr db.hintdb_state gr &&
-          is_unfold v.code.obj then None else Some gr
-      | None -> None
-    in
-      match k with
+      match gr with
       | None ->
           let is_present (_, (_, v')) = KerName.equal v.code.uid v'.code.uid in
           if not (List.exists is_present db.hintdb_nopat) then
@@ -672,16 +652,14 @@ struct
       | Some gr ->
         let pat =
           if not db.use_dn && is_exact v.code.obj then None
-          else
-            let dnst = if db.use_dn then Some db.hintdb_state else None in
-            Option.map (fun p -> (dnst, p)) v.pat
+          else v.pat
         in
           let oval = find gr db in
             { db with hintdb_map = GlobRef.Map.add gr (add_tac pat idv oval) db.hintdb_map }
 
   let rebuild_db st' db =
     let db' =
-      { db with hintdb_map = GlobRef.Map.map (rebuild_dn st') db.hintdb_map;
+      { db with hintdb_map = GlobRef.Map.map (rebuild_dn (Some st')) db.hintdb_map;
         hintdb_state = st'; hintdb_nopat = [] }
     in
       List.fold_left (fun db (gr,(id,v)) -> addkv gr id v db) db' db.hintdb_nopat
@@ -720,7 +698,7 @@ struct
   let remove_list env grs db =
     let filter (_, h) =
       match h.name with PathHints [gr] -> not (List.mem_f GlobRef.equal gr grs) | _ -> true in
-    let hintmap = GlobRef.Map.map (remove_he db.hintdb_state filter) db.hintdb_map in
+    let hintmap = GlobRef.Map.map (remove_he (dn_ts db) filter) db.hintdb_map in
     let hintnopat = List.filter (fun (ge, sd) -> filter sd) db.hintdb_nopat in
       { db with hintdb_map = hintmap; hintdb_nopat = hintnopat }
 
@@ -761,7 +739,7 @@ struct
     let f gr e me =
       Some { e with sentry_mode = me.sentry_mode @ e.sentry_mode }
     in
-    let mode_entries = GlobRef.Map.map (fun m -> { empty_se with sentry_mode = m }) modes in
+    let mode_entries = GlobRef.Map.map (fun m -> { (empty_se (dn_ts db)) with sentry_mode = m }) modes in
     { db with hintdb_map = GlobRef.Map.union f db.hintdb_map mode_entries }
 
   let modes db = GlobRef.Map.map (fun se -> se.sentry_mode) db.hintdb_map
@@ -839,7 +817,7 @@ let make_apply_entry env sigma hnf info ?(name=PathAny) (c, cty, ctx) =
   match EConstr.kind sigma cty with
   | Prod _ ->
     let sigma' = merge_context_set_opt sigma ctx in
-    let ce = mk_clenv_from_env env sigma' None (c,cty) in
+    let ce = mk_clenv_from env sigma' (c,cty) in
     let c' = clenv_type (* ~reduce:false *) ce in
     let hd =
       try head_bound ce.evd c'
@@ -957,7 +935,7 @@ let make_trivial env sigma ?(name=PathAny) r =
   let sigma = merge_context_set_opt sigma ctx in
   let t = hnf_constr env sigma (Retyping.get_type_of env sigma c) in
   let hd = head_constr sigma t in
-  let ce = mk_clenv_from_env env sigma None (c,t) in
+  let ce = mk_clenv_from env sigma (c,t) in
   (Some hd,
    { pri=1;
      pat = Some (Patternops.pattern_of_constr env ce.evd (EConstr.to_constr sigma (clenv_type ce)));
@@ -1068,6 +1046,25 @@ type hint_obj = {
   hint_name : string;
   hint_action : hint_action;
 }
+
+let is_trivial_action = function
+| AddTransparency { grefs } ->
+  begin match grefs with
+  | HintsVariables | HintsConstants -> false
+  | HintsReferences l -> List.is_empty l
+  end
+| AddHints l -> List.is_empty l
+| RemoveHints l -> List.is_empty l
+| AddCut _ | AddMode _ -> false
+
+let rec is_section_path = function
+| PathAtom PathAny -> false
+| PathAtom (PathHints grs) ->
+  let check c = isVarRef c && Lib.is_in_section c in
+  List.exists check grs
+| PathStar p -> is_section_path p
+| PathSeq (p, q) | PathOr (p, q) -> is_section_path p || is_section_path q
+| PathEmpty | PathEpsilon -> false
 
 let superglobal h = match h.hint_local with
   | SuperGlobal -> true
@@ -1189,12 +1186,45 @@ let subst_autohint (subst, obj) =
   in
   if action == obj.hint_action then obj else { obj with hint_action = action }
 
+let is_hint_local = function Local -> true | Export | SuperGlobal -> false
+
 let classify_autohint obj =
-  match obj.hint_action with
-  | AddHints [] -> Dispose
-  | _ -> match obj.hint_local with
-    | Local -> Dispose
-    | Export | SuperGlobal -> Substitute obj
+  if is_hint_local obj.hint_local || is_trivial_action obj.hint_action then Dispose
+  else Substitute obj
+
+let discharge_autohint (_, obj) =
+  if is_hint_local obj.hint_local then None
+  else
+    let action = match obj.hint_action with
+    | AddTransparency { grefs; state } ->
+      let grefs = match grefs with
+      | HintsVariables | HintsConstants -> grefs
+      | HintsReferences grs ->
+        let filter = function
+        | EvalConstRef c -> true
+        | EvalVarRef id -> not @@ Lib.is_in_section (GlobRef.VarRef id)
+        in
+        let grs = List.filter filter grs in
+        HintsReferences grs
+      in
+      AddTransparency { grefs; state }
+    | AddHints _ | RemoveHints _ ->
+      (* not supported yet *)
+      assert false
+    | AddCut path ->
+      if is_section_path path then AddHints [] (* dummy *) else obj.hint_action
+    | AddMode { gref; mode } ->
+      if Lib.is_in_section gref then
+        if isVarRef gref then AddHints [] (* dummy *)
+        else
+          let (_, params) = Lib.section_instance gref in
+          (* Default mode for discharged parameters is output *)
+          let mode = Array.append (Array.make (Array.length params) ModeOutput) mode in
+          AddMode { gref; mode }
+      else obj.hint_action
+    in
+    if is_trivial_action action then None
+    else Some { obj with hint_action = action }
 
 let inAutoHint : hint_obj -> obj =
   declare_object {(default_object "AUTOHINT") with
@@ -1202,10 +1232,25 @@ let inAutoHint : hint_obj -> obj =
                     load_function = load_autohint;
                     open_function = simple_open open_autohint;
                     subst_function = subst_autohint;
-                    classify_function = classify_autohint; }
+                    classify_function = classify_autohint;
+                    discharge_function = discharge_autohint;
+                  }
 
-let make_hint ~local name action = {
-  hint_local = local;
+let check_locality locality =
+  let not_local what =
+    CErrors.user_err
+        Pp.(str "This command does not support the " ++
+            str what ++ str " attribute in sections.")
+  in
+  if Global.sections_are_opened () then
+    match locality with
+    | Local -> ()
+    | SuperGlobal -> not_local "global"
+    | Export -> not_local "export"
+
+let make_hint ~locality name action =
+  {
+  hint_local = locality;
   hint_name = name;
   hint_action = action;
 }
@@ -1220,31 +1265,17 @@ let warn_deprecated_hint_without_locality =
     #[local], #[global] and #[export] depending on your choice. For example: \
     \"#[export] Hint Unfold foo : bar.\"")
 
-let check_hint_locality = let open Goptions in function
-| OptGlobal ->
-  if Global.sections_are_opened () then
-  CErrors.user_err Pp.(str
-    "This command does not support the global attribute in sections.");
-| OptExport ->
-  if Global.sections_are_opened () then
-  CErrors.user_err Pp.(str
-    "This command does not support the export attribute in sections.");
-| OptDefault ->
-  if not @@ Global.sections_are_opened () then
-    warn_deprecated_hint_without_locality ()
-| OptLocal -> ()
-
-let interp_locality = function
-| Goptions.OptDefault | Goptions.OptGlobal -> SuperGlobal
-| Goptions.OptExport -> Export
-| Goptions.OptLocal -> Local
+let default_hint_locality () =
+  if Global.sections_are_opened () then Local else
+    let () = warn_deprecated_hint_without_locality () in
+    SuperGlobal
 
 let remove_hints ~locality dbnames grs =
-  let local = interp_locality locality in
+  let () = check_locality locality in
   let dbnames = if List.is_empty dbnames then ["core"] else dbnames in
     List.iter
       (fun dbname ->
-        let hint = make_hint ~local dbname (RemoveHints grs) in
+        let hint = make_hint ~locality dbname (RemoveHints grs) in
         Lib.add_anonymous_leaf (inAutoHint hint))
       dbnames
 
@@ -1252,7 +1283,7 @@ let remove_hints ~locality dbnames grs =
 (*                     The "Hint" vernacular command                      *)
 (**************************************************************************)
 
-let add_resolves env sigma clist ~local dbnames =
+let add_resolves env sigma clist ~locality dbnames =
   List.iter
     (fun dbname ->
       let r =
@@ -1263,7 +1294,7 @@ let add_resolves env sigma clist ~local dbnames =
       let check (_, hint) = match hint.code.obj with
       | ERes_pf (c, cty, ctx) ->
         let sigma' = merge_context_set_opt sigma ctx in
-        let ce = mk_clenv_from_env env sigma' None (c,cty) in
+        let ce = mk_clenv_from env sigma' (c,cty) in
         let miss = clenv_missing ce in
         let nmiss = List.length miss in
         let variables = str (CString.plural nmiss "variable") in
@@ -1279,56 +1310,56 @@ let add_resolves env sigma clist ~local dbnames =
       | _ -> ()
       in
       let () = if not !Flags.quiet then List.iter check r in
-      let hint = make_hint ~local dbname (AddHints r) in
+      let hint = make_hint ~locality dbname (AddHints r) in
       Lib.add_anonymous_leaf (inAutoHint hint))
     dbnames
 
-let add_unfolds l ~local dbnames =
+let add_unfolds l ~locality dbnames =
   List.iter
     (fun dbname ->
-      let hint = make_hint ~local dbname (AddHints (List.map make_unfold l)) in
+      let hint = make_hint ~locality dbname (AddHints (List.map make_unfold l)) in
       Lib.add_anonymous_leaf (inAutoHint hint))
     dbnames
 
-let add_cuts l ~local dbnames =
+let add_cuts l ~locality dbnames =
   List.iter
     (fun dbname ->
-      let hint = make_hint ~local dbname (AddCut l) in
+      let hint = make_hint ~locality dbname (AddCut l) in
       Lib.add_anonymous_leaf (inAutoHint hint))
     dbnames
 
-let add_mode l m ~local dbnames =
+let add_mode l m ~locality dbnames =
   List.iter
     (fun dbname ->
       let m' = make_mode l m in
-      let hint = make_hint ~local dbname (AddMode { gref = l; mode = m' }) in
+      let hint = make_hint ~locality dbname (AddMode { gref = l; mode = m' }) in
       Lib.add_anonymous_leaf (inAutoHint hint))
     dbnames
 
-let add_transparency l b ~local dbnames =
+let add_transparency l b ~locality dbnames =
   List.iter
     (fun dbname ->
-      let hint = make_hint ~local dbname (AddTransparency { grefs = l; state = b }) in
+      let hint = make_hint ~locality dbname (AddTransparency { grefs = l; state = b }) in
       Lib.add_anonymous_leaf (inAutoHint hint))
     dbnames
 
-let add_extern info tacast ~local dbname =
+let add_extern info tacast ~locality dbname =
   let pat = match info.hint_pattern with
   | None -> None
   | Some (_, pat) -> Some pat
   in
-  let hint = make_hint ~local dbname
+  let hint = make_hint ~locality dbname
                        (AddHints [make_extern (Option.get info.hint_priority) pat tacast]) in
   Lib.add_anonymous_leaf (inAutoHint hint)
 
-let add_externs info tacast ~local dbnames =
-  List.iter (add_extern info tacast ~local) dbnames
+let add_externs info tacast ~locality dbnames =
+  List.iter (add_extern info tacast ~locality) dbnames
 
-let add_trivials env sigma l ~local dbnames =
+let add_trivials env sigma l ~locality dbnames =
   List.iter
     (fun dbname ->
       let l = List.map (fun (name, c) -> make_trivial env sigma ~name c) l in
-      let hint = make_hint ~local dbname (AddHints l) in
+      let hint = make_hint ~locality dbname (AddHints l) in
       Lib.add_anonymous_leaf (inAutoHint hint))
     dbnames
 
@@ -1384,23 +1415,45 @@ let prepare_hint check env init (sigma,c) =
     let diff = Univ.ContextSet.diff (Evd.universe_context_set sigma) (Evd.universe_context_set init) in
     (c', diff)
 
+let warn_non_local_section_hint =
+  CWarnings.create ~name:"non-local-section-hint" ~category:"automation"
+    (fun () -> strbrk "This hint is not local but depends on a section variable. It will disappear when the section is closed.")
+
+let is_notlocal = function
+| Local -> false
+| Export | SuperGlobal -> true
+
 let add_hints ~locality dbnames h =
-  let local = interp_locality locality in
+  let () = match h with
+  | HintsResolveEntry _ | HintsImmediateEntry _ | HintsUnfoldEntry _ | HintsExternEntry _ ->
+    check_locality locality
+  | HintsTransparencyEntry ((HintsVariables | HintsConstants), _) -> ()
+  | HintsTransparencyEntry (HintsReferences grs, _) ->
+    let iter gr =
+      let gr = global_of_evaluable_reference gr in
+      if is_notlocal locality && isVarRef gr && Lib.is_in_section gr then warn_non_local_section_hint ()
+    in
+    List.iter iter grs
+  | HintsCutEntry p ->
+    if is_notlocal locality && is_section_path p then warn_non_local_section_hint ()
+  | HintsModeEntry (gr, _) ->
+    if is_notlocal locality && isVarRef gr && Lib.is_in_section gr then warn_non_local_section_hint ()
+  in
   if String.List.mem "nocore" dbnames then
     user_err Pp.(str "The hint database \"nocore\" is meant to stay empty.");
   assert (not (List.is_empty dbnames));
   let env = Global.env() in
   let sigma = Evd.from_env env in
   match h with
-  | HintsResolveEntry lhints -> add_resolves env sigma lhints ~local dbnames
-  | HintsImmediateEntry lhints -> add_trivials env sigma lhints ~local dbnames
-  | HintsCutEntry lhints -> add_cuts lhints ~local dbnames
-  | HintsModeEntry (l,m) -> add_mode l m ~local dbnames
-  | HintsUnfoldEntry lhints -> add_unfolds lhints ~local dbnames
+  | HintsResolveEntry lhints -> add_resolves env sigma lhints ~locality dbnames
+  | HintsImmediateEntry lhints -> add_trivials env sigma lhints ~locality dbnames
+  | HintsCutEntry lhints -> add_cuts lhints ~locality dbnames
+  | HintsModeEntry (l,m) -> add_mode l m ~locality dbnames
+  | HintsUnfoldEntry lhints -> add_unfolds lhints ~locality dbnames
   | HintsTransparencyEntry (lhints, b) ->
-      add_transparency lhints b ~local dbnames
+      add_transparency lhints b ~locality dbnames
   | HintsExternEntry (info, tacexp) ->
-      add_externs info tacexp ~local dbnames
+      add_externs info tacexp ~locality dbnames
 
 let hint_globref gr = IsGlobRef gr
 
@@ -1514,7 +1567,7 @@ let pr_hint_term env sigma cl =
       let fn = try
           let hdc = decompose_app_bound sigma cl in
             if occur_existential sigma cl then
-              (fun db -> match Hint_db.map_existential sigma ~secvars:Id.Pred.full hdc cl db with
+              (fun db -> match Hint_db.map_eauto env sigma ~secvars:Id.Pred.full hdc cl db with
               | ModeMatch l -> l
               | ModeMismatch -> [])
             else Hint_db.map_auto env sigma ~secvars:Id.Pred.full hdc cl

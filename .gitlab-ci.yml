@@ -2,11 +2,7 @@ image: "$IMAGE"
 
 stages:
   - docker
-  - stage-1 # No dependencies
-  - stage-2 # Only dependencies in stage 1
-  - stage-3 # Only dependencies in stage 1 and 2
-  - stage-4 # Only dependencies in stage 1, 2 and 3
-  - stage-5 # Only dependencies in stage 1, 2, 3, and 4
+  - build
   - deploy
 
 # When a job has no dependencies, it goes to stage 1. Otherwise, we
@@ -20,7 +16,7 @@ variables:
   # Format: $IMAGE-V$DATE-$hash
   # The $hash is the first 10 characters of the md5 of the Dockerfile. e.g.
   # echo $(md5sum dev/ci/docker/bionic_coq/Dockerfile | head -c 10)
-  CACHEKEY: "bionic_coq-V2021-05-22-9c7889b60a"
+  CACHEKEY: "bionic_coq-V2021-10-01-459f39d2cf"
   IMAGE: "$CI_REGISTRY_IMAGE:$CACHEKEY"
   # By default, jobs run in the base switch; override to select another switch
   OPAM_SWITCH: "base"
@@ -38,6 +34,7 @@ docker-boot:
     - docker:dind
   before_script: []
   script:
+    - dev/tools/check-cachekey.sh
     - docker login -u gitlab-ci-token -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
     - cd dev/ci/docker/bionic_coq/
     - if docker pull "$IMAGE"; then echo "Image prebuilt!"; exit 0; fi
@@ -68,7 +65,7 @@ before_script:
 
 # TODO figure out how to build doc for installed Coq
 .build-template:
-  stage: stage-1
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -82,7 +79,7 @@ before_script:
       - config/coq_config.ml
       - config/dune.c_flags
       - dmesg.txt
-    expire_in: 1 week
+    expire_in: 1 month
   script:
     - set -e
 
@@ -91,7 +88,7 @@ before_script:
     - echo 'end:coq.clean'
 
     - echo 'start:coq.config'
-    - ./configure -warn-error yes -prefix "$(pwd)/_install_ci" ${COQ_EXTRA_CONF}"$COQ_EXTRA_CONF_QUOTE"
+    - ./configure -warn-error yes -prefix "$(pwd)/_install_ci" $COQ_EXTRA_CONF
     - echo 'end:coq.config'
 
     - echo 'start:coq.build'
@@ -106,7 +103,7 @@ before_script:
 
 # Template for building Coq + stdlib, typical use: overload the switch
 .dune-template:
-  stage: stage-1
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -129,10 +126,10 @@ before_script:
     paths:
       - _build/log
       - _build.tar.bz2
-    expire_in: 1 week
+    expire_in: 1 month
 
 .dune-ci-template:
-  stage: stage-2
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -160,7 +157,7 @@ before_script:
 # overridden otherwise the CI will fail.
 
 .doc-template:
-  stage: stage-2
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -179,7 +176,7 @@ before_script:
 
 # set "needs" when using
 .test-suite-template:
-  stage: stage-2
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -204,7 +201,7 @@ before_script:
 
 # set "needs" when using
 .validate-template:
-  stage: stage-2
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -227,7 +224,7 @@ before_script:
     expire_in: 2 months
 
 .ci-template:
-  stage: stage-2
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -253,19 +250,6 @@ before_script:
   variables:
     OPAM_SWITCH: "edge"
     OPAM_VARIANT: "+flambda"
-
-.platform-template:
-  stage: stage-1
-  interruptible: true
-  variables:
-    PLATFORM: "https://github.com/coq/platform/archive/dev-ci.zip"
-  artifacts:
-    name: "$CI_JOB_NAME"
-    paths:
-      - artifacts
-    when: always
-    expire_in: 1 week
-  before_script: [] # We don't want to use the shared 'before_script'
 
 .deploy-template:
   stage: deploy
@@ -304,15 +288,13 @@ build:edge+flambda:
   variables:
     OPAM_SWITCH: edge
     OPAM_VARIANT: "+flambda"
-    COQ_EXTRA_CONF: "-native-compiler yes -coqide opt -flambda-opts "
-    COQ_EXTRA_CONF_QUOTE: "-O3 -unbox-closures"
+    COQ_EXTRA_CONF: "-native-compiler yes -coqide opt"
 
 build:edge+flambda:dune:dev:
   extends: .dune-template
 
 build:base+async:
   extends: .build-template
-  stage: stage-1
   variables:
     COQ_EXTRA_CONF: "-native-compiler yes -coqide opt"
     COQUSERFLAGS: "-async-proofs on"
@@ -341,20 +323,8 @@ build:quick:
   artifacts:
     when: always
 
-windows64:
-  extends: .platform-template
-  variables:
-    ARCH: "64"
-  script:
-    - call dev/ci/platform-windows.bat
-  tags:
-    - windows-inria
-  only:
-    variables:
-      - $WINDOWS =~ /enabled/
-
 lint:
-  stage: stage-1
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -365,7 +335,7 @@ lint:
     OPAM_VARIANT: "+flambda"
 
 pkg:opam:
-  stage: stage-1
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -384,26 +354,23 @@ pkg:opam:
   only: *full-ci
 
 .nix-template:
-  image: nixorg/nix:latest # Minimal NixOS image which doesn't even contain git
+  stage: build
+  needs: []
+  except:
+    variables:
+      - $ONLY_WINDOWS == "true"
   interruptible: true
-  stage: stage-1
+  image: nixorg/nix:latest # Minimal NixOS image which doesn't even contain git
   variables:
-    # By default we use coq.cachix.org as an extra substituter but this can be overridden
-    EXTRA_SUBSTITUTERS: https://coq.cachix.org
-    EXTRA_PUBLIC_KEYS: coq.cachix.org-1:5QW/wwEnD+l2jvN6QRbRRsa4hBHG3QiQQ26cxu1F5tI=
-    # The following variables should not be overridden
-    GIT_STRATEGY: none
-    NIXOS_PUBLIC_KEY: cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
-
-  before_script: [] # We don't want to use the shared 'before_script'
-  script:
+    GIT_STRATEGY: none # Required because we don't have git
+    USER: root # Variable required by Cachix
+  before_script:
     - cat /proc/{cpu,mem}info || true
     # Use current worktree as tmpdir to allow exporting artifacts in case of failure
     - export TMPDIR=$PWD
-    # We build an expression rather than a direct URL to not be dependent on
-    # the URL location; we are forced to put the public key of cache.nixos.org
-    # because there is no --extra-trusted-public-key option.
-    - nix-build -E "import (fetchTarball $CI_PROJECT_URL/-/archive/$CI_COMMIT_SHA.tar.gz) {}" -K --extra-substituters "$EXTRA_SUBSTITUTERS" --trusted-public-keys "$NIXOS_PUBLIC_KEY $EXTRA_PUBLIC_KEYS" | if [ ! -z "$CACHIX_SIGNING_KEY" ]; then cachix push coq; fi
+    # Install Cachix as documented at https://github.com/cachix/cachix
+    - nix-env -iA cachix -f https://cachix.org/api/v1/install
+    - cachix use coq
   artifacts:
     name: "$CI_JOB_NAME.logs"
     when: on_failure
@@ -417,15 +384,13 @@ pkg:nix:deploy:
   environment:
     name: cachix
     url: https://coq.cachix.org
-  before_script:
-    # Install Cachix as documented at https://github.com/cachix/cachix
-    - nix-env -iA cachix --prebuilt-only -f https://cachix.org/api/v1/install
+  script:
+    - nix-build https://coq.inria.fr/nix/toolbox --arg override "{coq = coq:$CI_COMMIT_SHA;}" -K | cachix push coq
   only:
     - master
     - /^v.*\..*$/
-  except:
-    variables:
-      - $ONLY_WINDOWS == "true"
+  # In the future, add a condition to also have $CACHIX_AUTH_TOKEN set.
+  # At the time of writing, we still rely on $CACHIX_SIGNING_KEY for Coq's Cachix.
 
 pkg:nix:deploy:channel:
   extends: .deploy-template
@@ -450,12 +415,8 @@ pkg:nix:deploy:channel:
 
 pkg:nix:
   extends: .nix-template
-  except:
-    refs:
-      - master
-      - /^v.*\..*$/
-    variables:
-      - $ONLY_WINDOWS == "true"
+  script:
+    - nix-build "$CI_PROJECT_URL/-/archive/$CI_COMMIT_SHA.tar.gz" -K
 
 doc:refman:
   extends: .doc-template
@@ -550,7 +511,7 @@ test-suite:edge+flambda:
   only: *full-ci
 
 test-suite:edge:dune:dev:
-  stage: stage-2
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -572,7 +533,7 @@ test-suite:edge:dune:dev:
     # expire_in: never
 
 .test-suite:ocaml+beta+dune-template:
-  stage: stage-1
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
@@ -651,6 +612,9 @@ validate:quick:
 library:ci-argosy:
   extends: .ci-template
 
+library:ci-autosubst:
+  extends: .ci-template-flambda
+
 library:ci-bbv:
   extends: .ci-template
 
@@ -659,15 +623,19 @@ library:ci-bedrock2:
   variables:
     NJOBS: "1"
 
+library:ci-category_theory:
+  extends: .ci-template
+  needs:
+  - build:base
+  - plugin:ci-equations
+
 library:ci-color:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - plugin:ci-bignums
 
 library:ci-compcert:
-  stage: stage-3
   extends: .ci-template-flambda
   needs:
   - build:edge+flambda
@@ -681,7 +649,6 @@ library:ci-coq_tools:
   extends: .ci-template
 
 library:ci-coqprime:
-  stage: stage-3
   extends: .ci-template-flambda
   needs:
   - build:edge+flambda
@@ -691,7 +658,6 @@ library:ci-coqtail:
   extends: .ci-template
 
 library:ci-coquelicot:
-  stage: stage-3
   extends: .ci-template-flambda
   needs:
   - build:edge+flambda
@@ -705,14 +671,12 @@ library:ci-engine_bench:
 
 library:ci-fcsl_pcm:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - library:ci-mathcomp
 
 library:ci-fiat_crypto:
   extends: .ci-template-flambda
-  stage: stage-4
   needs:
   - build:edge+flambda
   - library:ci-coqprime
@@ -728,7 +692,6 @@ library:ci-fiat_crypto_legacy:
 # https://github.com/coq/coq/pull/11916#issuecomment-609977375
 library:ci-fiat_crypto_ocaml:
   extends: .ci-template
-  stage: stage-5
   needs:
   - build:edge+flambda
   - library:ci-coqprime
@@ -744,21 +707,18 @@ library:ci-menhir:
 
 library:ci-oddorder:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - library:ci-mathcomp
 
 library:ci-fourcolor:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - library:ci-mathcomp
 
 library:ci-corn:
   extends: .ci-template-flambda
-  stage: stage-4
   needs:
   - build:edge+flambda
   - plugin:ci-bignums
@@ -766,14 +726,12 @@ library:ci-corn:
 
 plugin:ci-gappa:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - library:ci-flocq
 
 library:ci-geocoq:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - library:ci-mathcomp
@@ -783,10 +741,12 @@ library:ci-hott:
 
 library:ci-iris:
   extends: .ci-template-flambda
+  needs:
+    - build:edge+flambda
+    - library:ci-autosubst
 
 library:ci-math_classes:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - plugin:ci-bignums
@@ -796,7 +756,6 @@ library:ci-mathcomp:
 
 library:ci-mczify:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - library:ci-mathcomp
@@ -818,14 +777,12 @@ library:ci-verdi_raft:
 
 library:ci-vst:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - library:ci-flocq
 
 library:ci-deriving:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - library:ci-mathcomp
@@ -855,7 +812,6 @@ plugin:ci-fiat_parsers:
 
 plugin:ci-metacoq:
   extends: .ci-template
-  stage: stage-3
   needs:
   - build:base
   - plugin:ci-equations
@@ -870,18 +826,17 @@ plugin:ci-perennial:
   extends: .ci-template-flambda
 
 plugin:plugin-tutorial:
-  stage: stage-1
+  stage: build
   except:
     variables:
       - $ONLY_WINDOWS == "true"
   interruptible: true
   script:
-    - ./configure -local -warn-error yes
+    - ./configure -profile devel -warn-error yes
     - make -j "$NJOBS" plugin-tutorial
 
 plugin:ci-quickchick:
   extends: .ci-template-flambda
-  stage: stage-3
   needs:
   - build:edge+flambda
   - library:ci-mathcomp

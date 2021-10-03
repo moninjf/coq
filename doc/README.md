@@ -30,7 +30,7 @@ To produce the complete documentation in HTML, you will need Coq dependencies
 listed in [`INSTALL.md`](../INSTALL.md). Additionally, the Sphinx-based
 reference manual requires Python 3, and the following Python packages:
 
-  - sphinx >= 2.3.1
+  - sphinx >= 3.0.2
   - sphinx_rtd_theme >= 0.4.3
   - beautifulsoup4 >= 4.0.6
   - antlr4-python3-runtime >= 4.7.1
@@ -136,5 +136,7 @@ To install all produced documents, do:
     make install-doc
 
 This will install the documentation in `/usr/share/doc/coq` unless you
-specify another value through the `-docdir` option of `./configure` or the
-`DOCDIR` environment variable.
+specify another value through the `-docdir` option of `./configure` or
+the `DOCDIR` environment variable. Note that `DOCDIR` controls the
+root of the documentation, that is to say, in the example above, the
+root is `/usr/share/doc`.

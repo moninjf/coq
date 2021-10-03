@@ -243,7 +243,7 @@ val is_defined : evar_map -> Evar.t-> bool
 val is_undefined : evar_map -> Evar.t-> bool
 (** Whether an evar is not defined in an evarmap. *)
 
-val add_constraints : evar_map -> Univ.Constraint.t -> evar_map
+val add_constraints : evar_map -> Univ.Constraints.t -> evar_map
 (** Add universe constraints in an evar map. *)
 
 val undefined_map : evar_map -> evar_info Evar.Map.t
@@ -615,7 +615,7 @@ val univ_flexible_alg : rigid
 
 type 'a in_evar_universe_context = 'a * UState.t
 
-val restrict_universe_context : evar_map -> Univ.LSet.t -> evar_map
+val restrict_universe_context : evar_map -> Univ.Level.Set.t -> evar_map
 
 (** Raises Not_found if not a name for a universe in this map. *)
 val universe_of_name : evar_map -> Id.t -> Univ.Level.t
@@ -655,7 +655,7 @@ val set_eq_instances : ?flex:bool ->
 val check_eq : evar_map -> Univ.Universe.t -> Univ.Universe.t -> bool
 val check_leq : evar_map -> Univ.Universe.t -> Univ.Universe.t -> bool
 
-val check_constraints : evar_map -> Univ.Constraint.t -> bool
+val check_constraints : evar_map -> Univ.Constraints.t -> bool
 
 val evar_universe_context : evar_map -> UState.t
 val universe_context_set : evar_map -> Univ.ContextSet.t
@@ -667,9 +667,9 @@ val universes : evar_map -> UGraph.t
     [Univ.ContextSet.to_context]. *)
 val to_universe_context : evar_map -> Univ.UContext.t
 
-val univ_entry : poly:bool -> evar_map -> Entries.universes_entry
+val univ_entry : poly:bool -> evar_map -> UState.named_universes_entry
 
-val check_univ_decl : poly:bool -> evar_map -> UState.universe_decl -> Entries.universes_entry
+val check_univ_decl : poly:bool -> evar_map -> UState.universe_decl -> UState.named_universes_entry
 
 val merge_universe_context : evar_map -> UState.t -> evar_map
 val set_universe_context : evar_map -> UState.t -> evar_map
@@ -778,4 +778,7 @@ module MiniEConstr : sig
     (t, t) Context.Rel.Declaration.pt
   val to_rel_decl : evar_map -> (t, t) Context.Rel.Declaration.pt ->
     (Constr.t, Constr.types) Context.Rel.Declaration.pt
+
+  val of_named_context : (Constr.t, Constr.types) Context.Named.pt -> (t, t) Context.Named.pt
+  val of_rel_context : (Constr.t, Constr.types) Context.Rel.pt -> (t, t) Context.Rel.pt
 end

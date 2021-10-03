@@ -159,21 +159,36 @@ let error_cannot_parse s (i,j) =
   Printf.eprintf "File \"%s\", characters %i-%i: Syntax error\n" s i j;
   exit 1
 
+let error_cannot_open_project_file msg =
+  Printf.eprintf "%s\n" msg;
+  exit 1
+
+let error_cannot_parse_project_file file msg =
+  Printf.eprintf "Project file \"%s\": Syntax error: %s\n" file msg;
+  exit 1
+
 let error_cannot_stat s unix_error =
-  (* Print an arbitrary line number, such that the message matches
-     common error message pattern. *)
-  Printf.eprintf "File \"%s\", line 1: %s\n" s (error_message unix_error);
+  Printf.eprintf "%s: %s\n" s (error_message unix_error);
+  exit 1
+
+let error_cannot_stat_in f s unix_error =
+  Printf.eprintf "In file \"%s\": %s: %s\n" f s (error_message unix_error);
   exit 1
 
 let error_cannot_open s msg =
   (* Print an arbitrary line number, such that the message matches
      common error message pattern. *)
-  Printf.eprintf "File \"%s\", line 1: %s\n" s msg;
+  Printf.eprintf "%s: %s\n" s msg;
   exit 1
 
-let warning_module_notfound f s =
-  coqdep_warning "in file %s, library %s is required and has not been found in the loadpath!"
-    f (String.concat "." s)
+let warning_module_notfound from f s =
+  match from with
+  | None ->
+      coqdep_warning "in file %s, library %s is required and has not been found in the loadpath!"
+        f (String.concat "." s)
+  | Some pth ->
+      coqdep_warning "in file %s, library %s is required from root %s and has not been found in the loadpath!"
+        f (String.concat "." s) (String.concat "." pth)
 
 let warning_declare f s =
   coqdep_warning "in file %s, declared ML module %s has not been found!" f s
@@ -329,12 +344,7 @@ let rec find_dependencies basename =
                 add_dep (DepRequire (canonize file_str))
               with Not_found ->
                   if verbose && not (is_in_coqlib ?from str) then
-                    let str =
-                      match from with
-                      | None -> str
-                      | Some pth -> pth @ str
-                      in
-                  warning_module_notfound f str
+                  warning_module_notfound from f str
               end) strl
         | Declare sl ->
             let declare suff dir s =
@@ -446,16 +456,18 @@ let is_not_seen_directory phys_f =
   not (StrSet.mem phys_f !norec_dirs)
 
 let rec add_directory recur add_file phys_dir log_dir =
-  register_dir_logpath phys_dir log_dir;
-  let f = function
-    | FileDir (phys_f,f) ->
-        if is_not_seen_directory phys_f && recur then
-          add_directory true add_file phys_f (log_dir @ [f])
-    | FileRegular f ->
-        add_file phys_dir log_dir f
-  in
   if exists_dir phys_dir then
-    process_directory f phys_dir
+    begin
+      register_dir_logpath phys_dir log_dir;
+      let f = function
+        | FileDir (phys_f,f) ->
+            if is_not_seen_directory phys_f && recur then
+              add_directory true add_file phys_f (log_dir @ [f])
+        | FileRegular f ->
+            add_file phys_dir log_dir f
+      in
+      process_directory f phys_dir
+    end
   else
     warning_cannot_open_dir phys_dir
 
@@ -476,6 +488,8 @@ let add_rec_dir_import add_file phys_dir log_dir =
 let add_caml_dir phys_dir =
   add_directory false add_caml_known phys_dir []
 
+exception Cannot_stat_file of string * Unix.error
+
 let rec treat_file old_dirname old_name =
   let name = Filename.basename old_name
   and new_dirname = Filename.dirname old_name in
@@ -488,7 +502,7 @@ let rec treat_file old_dirname old_name =
   let complete_name = file_name name dirname in
   let stat_res =
     try stat complete_name
-    with Unix_error(error, _, _) -> error_cannot_stat complete_name error
+    with Unix_error(error, _, _) -> raise (Cannot_stat_file (complete_name, error))
   in
   match stat_res.st_kind
   with
@@ -508,6 +522,16 @@ let rec treat_file old_dirname old_name =
          addQueue vAccu (name, absname)
        | _ -> ())
     | _ -> ()
+
+let treat_file_command_line old_name =
+  try treat_file None old_name
+  with Cannot_stat_file (f, msg) ->
+    error_cannot_stat f msg
+
+let treat_file_coq_project where old_name =
+  try treat_file None old_name
+  with Cannot_stat_file (f, msg) ->
+    error_cannot_stat_in where f msg
 
 (* "[sort]" outputs `.v` files required by others *)
 let sort () =
@@ -565,11 +589,16 @@ let treat_coqproject f =
   let open CoqProject_file in
   let iter_sourced f = List.iter (fun {thing} -> f thing) in
   let warning_fn x = coqdep_warning "%s" x in
-  let project = read_project_file ~warning_fn f in
+  let project =
+    try read_project_file ~warning_fn f
+    with
+    | Parsing_error msg -> error_cannot_parse_project_file f msg
+    | UnableToOpenProjectFile msg -> error_cannot_open_project_file msg
+  in
   iter_sourced (fun { path } -> add_caml_dir path) project.ml_includes;
   iter_sourced (fun ({ path }, l) -> add_q_include path l) project.q_includes;
   iter_sourced (fun ({ path }, l) -> add_r_include path l) project.r_includes;
-  iter_sourced (fun f -> treat_file None f) (all_files project)
+  iter_sourced (fun f' -> treat_file_coq_project f f') (all_files project)
 
 let rec parse = function
   | "-boot" :: ll -> option_boot := true; parse ll
@@ -585,7 +614,7 @@ let rec parse = function
   | "-R" :: ([] | [_]) -> usage ()
   | "-exclude-dir" :: r :: ll -> System.exclude_directory r; parse ll
   | "-exclude-dir" :: [] -> usage ()
-  | "-coqlib" :: r :: ll -> Envars.set_user_coqlib r; parse ll
+  | "-coqlib" :: r :: ll -> Boot.Env.set_coqlib r; parse ll
   | "-coqlib" :: [] -> usage ()
   | "-dyndep" :: "no" :: ll -> option_dynlink := No; parse ll
   | "-dyndep" :: "opt" :: ll -> option_dynlink := Opt; parse ll
@@ -596,7 +625,7 @@ let rec parse = function
   | opt :: ll when String.length opt > 0 && opt.[0] = '-' ->
     coqdep_warning "unknown option %s" opt;
     parse ll
-  | f :: ll -> treat_file None f; parse ll
+  | f :: ll -> treat_file_command_line f; parse ll
   | [] -> ()
 
 let init () =

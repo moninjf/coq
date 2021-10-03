@@ -27,10 +27,6 @@ module System : sig
   (** [protect f x] runs [f x] and discards changes in the system state  *)
   val protect : ('a -> 'b) -> 'a -> 'b
 
-  (** Load / Dump provide unsafe but convenient state dumping from / to disk *)
-  val dump : string -> unit
-  val load : string -> unit
-
 end
 
 module LemmaStack : sig
@@ -43,6 +39,7 @@ module LemmaStack : sig
   val map : f:(Declare.Proof.t -> Declare.Proof.t) -> t -> t
   val map_top : f:(Declare.Proof.t -> Declare.Proof.t) -> t -> t
   val with_top : t -> f:(Declare.Proof.t -> 'a ) -> 'a
+  val get_top : t -> Declare.Proof.t
 
 end
 
@@ -53,8 +50,8 @@ type t =
   (** summary + libstack *)
   ; lemmas  : LemmaStack.t option
   (** proofs of lemmas currently opened *)
-  ; program : Declare.OblState.t
-  (** program mode table *)
+  ; program : Declare.OblState.t NeList.t
+  (** program mode table. One per open module/section including the toplevel module. *)
   ; shallow : bool
   (** is the state trimmed down (libstack) *)
   }
@@ -125,8 +122,8 @@ module Declare : sig
 
   (* Low-level stuff *)
   val get : unit -> LemmaStack.t option
-  val get_program : unit -> Declare.OblState.t
-  val set : LemmaStack.t option * Declare.OblState.t -> unit
+  val get_program : unit -> Declare.OblState.t NeList.t
+  val set : LemmaStack.t option * Declare.OblState.t NeList.t -> unit
 
   val get_pstate : unit -> Declare.Proof.t option
 

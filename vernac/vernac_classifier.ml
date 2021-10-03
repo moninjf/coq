@@ -66,15 +66,13 @@ let classify_vernac e =
     | VernacExactProof _ -> VtQed (VtKeep VtKeepOpaque)
     (* Query *)
     | VernacShow _ | VernacPrint _ | VernacSearch _ | VernacLocate _
-    | VernacCheckMayEval _ -> VtQuery
+    | VernacGlobalCheck _ | VernacCheckMayEval _ -> VtQuery
     (* ProofStep *)
     | VernacProof _
     | VernacFocus _ | VernacUnfocus
     | VernacSubproof _
     | VernacCheckGuard
     | VernacUnfocused
-    | VernacSolveExistential _ ->
-        VtProofStep { proof_block_detection = None }
     | VernacBullet _ ->
         VtProofStep { proof_block_detection = Some "bullet" }
     | VernacEndSubproof ->
@@ -148,7 +146,6 @@ let classify_vernac e =
     | VernacSetOption _
     | VernacAddOption _ | VernacRemoveOption _
     | VernacMemOption _ | VernacPrintOption _
-    | VernacGlobalCheck _
     | VernacDeclareReduction _
     | VernacExistingClass _ | VernacExistingInstance _
     | VernacRegister _
@@ -169,7 +166,7 @@ let classify_vernac e =
     | VernacDeclareCustomEntry _
     | VernacOpenCloseScope _ | VernacDeclareScope _
     | VernacDelimiters _ | VernacBindScope _
-    | VernacInfix _ | VernacNotation _ | VernacNotationAddFormat _
+    | VernacNotation _ | VernacNotationAddFormat _
     | VernacReservedNotation _
     | VernacSyntacticDefinition _
     | VernacRequire _ | VernacImport _ | VernacInclude _
@@ -191,9 +188,6 @@ let classify_vernac e =
     | VernacUndoTo _ | VernacUndo _
     | VernacResetName _ | VernacResetInitial
     | VernacRestart -> VtMeta
-    (* What are these? *)
-    | VernacRestoreState _
-    | VernacWriteState _ -> VtSideff ([], VtNow)
     (* Plugins should classify their commands *)
     | VernacExtend (s,l) ->
         try Vernacextend.get_vernac_classifier s l
@@ -202,7 +196,7 @@ let classify_vernac e =
   let static_control_classifier ({ CAst.v ; _ } as cmd) =
     (* Fail Qed or Fail Lemma must not join/fork the DAG *)
     (* XXX why is Fail not always Query? *)
-    if Vernacprop.has_Fail cmd then
+    if Vernacprop.has_query_control cmd then
       (match static_classifier ~atts:v.attrs v.expr with
          | VtQuery | VtProofStep _ | VtSideff _
          | VtMeta as x -> x

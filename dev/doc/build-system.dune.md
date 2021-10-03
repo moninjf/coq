@@ -112,13 +112,25 @@ ml files in quick mode.
 Dune also provides targets for documentation, testing, and release
 builds, please see below.
 
-## Documentation and testing targets
+## Testing and documentation targets
 
-Coq's test-suite can be run with `dune runtest`; given that `dune`
-still invokes the test-suite makefile, the environment variable
-`NJOBS` will control the value of the `-j` option that is passed to
-make; common call `NJOBS=8 dune runtest`. This will be resolved in the
-future once the test suite is ported to Dune rules.
+There are two ways to run the test suite using Dune:
+
+- After building Coq with `make -f Makefile.dune world`, you can run the test-suite
+  in place, generating output files in the source tree
+  by running `make -C test-suite` from the top directory of the source tree
+  (equivalent to running `make test-suite` from the `test-suite` directory).
+  This permits incremental usage since output files will be preserved.
+
+- You can also run the test suite in a hygienic way using `make -f
+  Makefile.dune test-suite` or `dune runtest`. This is convenient for
+  full runs from scratch, for instance in CI.
+
+  Since `dune` still invokes the test-suite makefile, the
+  environment variable `NJOBS` is used to set the `-j` option
+  that is passed to make (for example, with the command
+  `NJOBS=8 dune runtest`). This use of `NJOBS` will be
+  removed when the test suite is fully ported to Dune.
 
 There is preliminary support to build the API documentation and
 reference manual in HTML format, use `dune build {@doc,@refman-html}`
@@ -140,7 +152,7 @@ automatically.
 
 ## ocamldebug
 
-You can use `ocamldebug` with Dune; after a build, do:
+You can use [ocamldebug](https://ocaml.org/learn/tutorials/debug.html#The-OCaml-debugger) with Dune; after a build, do:
 
 ```
 dune exec -- dev/dune-dbg coqc foo.v
@@ -179,6 +191,26 @@ depending on your OCaml version. This is due to several factors:
   https://github.com/coq/coq/issues/8952
 - OCaml >= 4.09 comes with `dynlink` already linked in so we need to
   modify the list of modules loaded.
+
+### Debugging hints
+
+- To debug a failure/error/anomaly, add a breakpoint in
+  `Vernacinterp.interp_gen` (in `vernac/vernacinterp.ml`) at the with
+  clause of the "try ... with ..." block, then go "back" a few steps
+  to find where the failure/error/anomaly has been raised
+
+- Alternatively, for an error or an anomaly, add breakpoints where it
+  was raised (eg in `user_err` or `anomaly` in `lib/cErrors.ml`, or
+  the functions in `pretyping/pretype_errors.ml`, or other raises
+  depending on the error)
+
+- If there is a linking error (eg from "source dune_db"), do a "dune
+  build coq-core.install" and try again.
+
+- If you build Coq with an OCaml version earlier than 4.06, and have the
+  OCAMLRUNPARAM environment variable set, Coq may hang on startup when run
+  from the debugger. If this happens, unset the variable, re-start Emacs, and
+  run the debugger again.
 
 ## Dropping from coqtop:
 

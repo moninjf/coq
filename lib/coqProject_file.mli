@@ -17,9 +17,10 @@ type 'a sourced = { thing : 'a; source : arg_source }
 type project = {
   project_file  : string option;
   makefile : string option;
-  install_kind  : install option;
-  use_ocamlopt : bool;
   native_compiler : native_compiler option;
+  (* the installation path for installing project documentation (relative to
+   * the user-contrib folder) *)
+  docroot : string option;
 
   v_files : string sourced list;
   mli_files : string sourced list;
@@ -33,30 +34,25 @@ type project = {
   q_includes  : (path * logic_path) sourced list;
   extra_args : string sourced list;
   defs : (string * string) sourced list;
-
-  (* deprecated in favor of a Makefile.local using :: rules *)
-  extra_targets : extra_target sourced list;
-  subdirs : string sourced list;
-}
-and extra_target = {
-  target : string;
-  dependencies : string;
-  phony : bool;
-  command : string;
 }
 and logic_path = string
 and path = { path : string; canonical_path : string }
-and install =
-  | NoInstall
-  | TraditionalInstall
-  | UserInstall
 and native_compiler =
 | NativeYes
 | NativeNo
 | NativeOndemand
 
 val cmdline_args_to_project : warning_fn:(string -> unit) -> curdir:string -> string list -> project
+
+exception UnableToOpenProjectFile of string
+
 val read_project_file : warning_fn:(string -> unit) -> string -> project
+(** [read_project_file warning_fn file] parses [file] as a Coq project;
+    use [warning_fn] for deprecate options;
+    raise [Parsing_error] on illegal options or arguments;
+    raise [UnableToOpenProjectFile msg] if the file could not be opened;
+    fails on some illegal non-project-file options *)
+
 val coqtop_args_from_project : project -> string list
 val find_project_file : from:string -> projfile_name:string -> string option
 
