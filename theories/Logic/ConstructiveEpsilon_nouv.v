@@ -112,41 +112,28 @@ Require Import Arith.
 Section ConstructiveIndefiniteGroundDescription_Direct.
 
 (** Preliminary library on decidable propositions *)
-Inductive dec_dec {A: Set} {P: A -> Prop} {x: A} : {P x} + {~ P x} -> Prop :=
-| left_left : forall yes, dec_dec (left yes)
-| right_right : forall no, dec_dec (right no)
+
+(** When [P] is decidable and we have a proof of [P],
+    then a test on [P] is necessarily [left yes] where [yes] is a proof of [P]
+  *)
+
+Inductive is_left {P: Prop} (yes: P) : {P} + {~ P} -> Prop :=
+| left_yes : is_left yes (left yes).
+Inductive ex_is_left {P: Prop} (d : {P} + {~ P}) : Prop :=
+| ex_yes : forall yes, is_left yes d -> ex_is_left d.
+
+Lemma yes_is_left {P: Prop} (p: P) (d : {P} + {~ P}) : ex_is_left d.
+Proof. destruct d as [yes | no]; [exists yes; constructor | case (no p)]. Qed.
+
+(* Similarly for [~P] *)
+Inductive is_right {P: Prop} (no : ~P) : {P} + {~ P} -> Prop :=
+| right_no : is_right no (right no).
+Inductive ex_is_no {P: Prop} (d : {P} + {~ P}) : Prop :=
+| ex_no : forall no, is_right no d -> ex_is_no d
 .
+Lemma no_is_right {P: Prop} (np: ~P) (d : {P} + {~ P}) : ex_is_no d.
+Proof. destruct d as [yes | no]; [case (np yes) | exists no; constructor]. Qed.
 
-Inductive dec_yes {A: Set} {P: A -> Prop} {x: A} (yes: P x) : {P x} + {~ P x} -> Prop :=
-| left_yes : dec_yes yes (left yes).
-Inductive dec_no {A: Set} {P: A -> Prop} {x: A} (no : ~P x) : {P x} + {~ P x} -> Prop :=
-| right_no : dec_no no (right no)
-.
-
-Inductive dec_ex_yes {A: Set} {P: A -> Prop} {x: A} : {P x} + {~ P x} -> Prop :=
-| ex_yes : forall yes, dec_ex_yes (left yes).
-Inductive dec_ex_no {A: Set} {P: A -> Prop} {x: A} : {P x} + {~ P x} -> Prop :=
-| ex_no : forall no, dec_ex_no (right no)
-.
-
-Lemma yes_dec  {A: Set} {P: A -> Prop} {x: A} (p: P x) (d : {P x} + {~ P x}) : dec_ex_yes d.
-Proof. destruct d as [yes | no]; [exists | case (no p)]. Qed.
-
-Lemma no_dec  {A: Set} {P: A -> Prop} {x: A} (np: ~P x) (d : {P x} + {~ P x}) : dec_ex_no d.
-Proof. destruct d as [yes | no]; [case (np yes) | exists]. Qed.
-
-Definition dec_dispatch {A: Set} {P: A -> Prop} {x: A} : {P x} + {~ P x} -> Prop :=
-  fun d =>
-    match d with
-    | left yes => dec_yes yes
-    | right no => dec_no no
-    end d.
-
-Lemma dec_small_inv {A: Set} {P: A -> Prop} {x: A} (d: {P x} + {~ P x}) : dec_dispatch d.
-Proof. destruct d; constructor. Qed.
-
-Lemma dec2dec_dec {A: Set} {P: A -> Prop} {x} (d: {P x} + {~ P x}) : dec_dec d.
-Proof.  destruct d; constructor. Qed.
 (** End of library *)
 
 Variable P : nat -> Prop.
@@ -211,51 +198,29 @@ Fixpoint prog_linear_search start (b : before_witness start) : nat :=
     | right no => prog_linear_search (S start) (inv_before_witness start b no)
   end.
 
-Lemma pls_yes :
-  forall start b (yes : P start),
-  prog_linear_search start b = start.
+Lemma pls_yes_simple {start b} (yes : P start) : prog_linear_search start b = start.
 Proof.
-  intros start b yes.
-  destruct b as [p | b]; cbn.
-  destruct (yes_dec yes (P_dec start)).
-  - reflexivity.
-  - destruct (yes_dec yes (P_dec start)). reflexivity.
+  destruct (yes_is_left yes (P_dec start)) as [y dy].
+  destruct b as [p | b]; cbn; case dy; reflexivity.
 Qed.
 
-(*
-Lemma pls_yes :
-  forall start b (yes : P start), P_dec start = left yes ->
-  prog_linear_search start b = start.
+(* More systematic version *)
+Lemma pls_yes {start b} (yes : P start) : prog_linear_search start b = start.
 Proof.
-  intros start b yes e.
-  (* Actually destruct b is sufficient, but we follow a general pattern *)
-  generalize (before_witness_small_inv b); unfold before_witness_dispatch. rewrite e.
-  intro bn. destruct bn as [p | b]; cbn; rewrite e.
-  - reflexivity.
-  - reflexivity.
+  destruct (yes_is_left yes (P_dec start)) as [y dy].
+  generalize (before_witness_small_inv b); unfold before_witness_dispatch.
+  case dy. intros [p | b']; cbn; case dy; reflexivity.
 Qed.
- *)
 
-Lemma pls_no :
-  forall start b (no : ~P start),
+Lemma pls_no {start b} (no : ~P start) :
   prog_linear_search start b = prog_linear_search (S start) (inv_before_witness start b no).
 Proof.
-  intros start b no.
-  generalize (before_witness_small_inv b); unfold before_witness_dispatch. destruct (no_dec no (P_dec start)) as [np].
-  intro bn. destruct bn as [b]; cbn. destruct (no_dec no (P_dec start)) as [np']. reflexivity.
+  destruct (no_is_right no (P_dec start)) as [no' dn].
+  generalize (before_witness_small_inv b); unfold before_witness_dispatch.
+  case dn. intros [bS]. cbn. case dn. reflexivity.
 Qed.
 
-(*
-Lemma pls_no :
-  forall start b (no : ~P start), P_dec start = right no ->
-  prog_linear_search start b = prog_linear_search (S start) (inv_before_witness start b no).
-Proof.
-  intros start b no e.
-  generalize (before_witness_small_inv b); unfold before_witness_dispatch. rewrite e.
-  intro bn. destruct bn as [b]; cbn; rewrite e. reflexivity.
-Qed.
- *)
-
+(* DEB A VIRER/REVOIR ? *)
 Inductive pls_result start (b : before_witness start) : nat -> Prop :=
 | plsr_stop : forall yes, P_dec start = left yes -> pls_result start b start
 | plsr_next : forall no, P_dec start = right no -> pls_result start b (prog_linear_search (S start) (inv_before_witness start b no))
@@ -285,6 +250,7 @@ Proof.
     + cbn. rewrite e. econstructor 1. exact e.
   - intro bn. destruct bn as [b]. cbn. rewrite e. apply (plsr_next start (next start b) no e).
 Qed.
+(* FIN A VIRER/REVOIR ? *)
 
 Scheme before_witness_dep_ind := Induction for before_witness Sort Prop.
 
@@ -292,10 +258,10 @@ Scheme before_witness_dep_ind := Induction for before_witness Sort Prop.
 Lemma pls_correct_post : forall start b, P (prog_linear_search start b).
 Proof.
   intros start b. induction b as [n p | n b IHb] using before_witness_dep_ind.
-  - rewrite (pls_yes _ _ p). exact p.
+  - rewrite (pls_yes p). exact p.
   - destruct (P_dec n) as [yes | no].
-    + rewrite (pls_yes _ _ yes). exact yes.
-    + rewrite (pls_no _ _ no). cbn. exact IHb.
+    + rewrite (pls_yes yes). exact yes.
+    + rewrite (pls_no no). cbn. exact IHb.
 Qed.
 
 (** pls ensures minimality of the output *)
@@ -303,10 +269,10 @@ Lemma pls_lower_bound {start b} :
   forall {k}, P k -> start <= k -> prog_linear_search start b <= k.
 Proof.
   induction b as [n p | n b IHb] using before_witness_dep_ind; intros k pk greater.
-  - rewrite (pls_yes _ _ p). exact greater.
+  - rewrite (pls_yes p). exact greater.
   - destruct (P_dec n) as [yes | no].
-    + rewrite (pls_yes _ _ yes). exact greater.
-    + rewrite (pls_no _ _ no); cbn.
+    + rewrite (pls_yes yes). exact greater.
+    + rewrite (pls_no no); cbn.
       destruct greater as [ | k greater].
       * case (no pk).
       * apply (IHb _ pk), le_n_S, greater.
@@ -341,6 +307,16 @@ Inductive rel_ls : nat -> nat -> Prop :=
 
 
 Lemma linear_search_rel : forall start b, rel_ls start (prog_linear_search start b).
+Proof.
+  intros start b.
+  induction b as [n p | n b IHb] using before_witness_dep_ind.
+  - rewrite (pls_yes p). apply Rstop, p.
+  - destruct (P_dec n) as [yes | no].
+    + rewrite (pls_yes yes). apply Rstop, yes.
+    + rewrite (pls_no no). cbn. apply (Rnext no), IHb.
+Qed.
+
+Lemma linear_search_rel_old : forall start b, rel_ls start (prog_linear_search start b).
 Proof.
   intros start b.
   induction b as [n p | n b IHb] using before_witness_dep_ind;
