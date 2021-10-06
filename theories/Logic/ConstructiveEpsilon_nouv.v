@@ -120,7 +120,7 @@ Section ConstructiveIndefiniteGroundDescription_Direct.
 Inductive is_left {P: Prop} (yes: P) : {P} + {~ P} -> Prop :=
 | left_yes : is_left yes (left yes).
 Inductive ex_is_left {P: Prop} (d : {P} + {~ P}) : Prop :=
-| ex_yes : forall yes, is_left yes d -> ex_is_left d.
+| ex_is_left_intro: forall yes, is_left yes d -> ex_is_left d.
 
 Lemma yes_is_left {P: Prop} (p: P) (d : {P} + {~ P}) : ex_is_left d.
 Proof. destruct d as [yes | no]; [exists yes; constructor | case (no p)]. Qed.
@@ -128,10 +128,10 @@ Proof. destruct d as [yes | no]; [exists yes; constructor | case (no p)]. Qed.
 (* Similarly for [~P] *)
 Inductive is_right {P: Prop} (no : ~P) : {P} + {~ P} -> Prop :=
 | right_no : is_right no (right no).
-Inductive ex_is_no {P: Prop} (d : {P} + {~ P}) : Prop :=
-| ex_no : forall no, is_right no d -> ex_is_no d
+Inductive ex_is_right {P: Prop} (d : {P} + {~ P}) : Prop :=
+| ex_is_right_intro : forall no, is_right no d -> ex_is_right d
 .
-Lemma no_is_right {P: Prop} (np: ~P) (d : {P} + {~ P}) : ex_is_no d.
+Lemma no_is_right {P: Prop} (np: ~P) (d : {P} + {~ P}) : ex_is_right d.
 Proof. destruct d as [yes | no]; [case (np yes) | exists no; constructor]. Qed.
 
 (** End of library *)
@@ -139,9 +139,6 @@ Proof. destruct d as [yes | no]; [case (np yes) | exists no; constructor]. Qed.
 Variable P : nat -> Prop.
 
 Hypothesis P_dec : forall n, {P n}+{~(P n)}.
-
-Corollary P_dec_dec : forall n, dec_dec (P_dec n).
-Proof. intro n. apply dec2dec_dec. Qed.
 
 
 (** The termination argument is [before_witness n], which says that
@@ -170,9 +167,11 @@ Definition inv_before_witness :
     end.
 
 (** Improved small inversion of before_witness *)
+(** The [P n] case leaves room for a greater witness ([next] os allowed) *)
 Inductive before_witness_is_either {n : nat} : before_witness n -> Prop :=
   | is_either_stop : forall p : P n, before_witness_is_either (stop n p)
   | is_either_next : forall b : before_witness (S n), before_witness_is_either (next n b).
+(** The [~P n] case leaves no choice *)
 Inductive before_witness_is_next {n : nat} : before_witness n -> Prop :=
   | is_next : forall b : before_witness (S n), before_witness_is_next (next n b).
 
