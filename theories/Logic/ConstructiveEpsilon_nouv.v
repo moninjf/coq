@@ -115,6 +115,7 @@ Section ConstructiveIndefiniteGroundDescription_Direct.
 
 (** When [P] is decidable and we have a proof of [P],
     then a test on [P] is necessarily [left yes] where [yes] is a proof of [P]
+    and similarly for [~P].
   *)
 
 Inductive is_left {P: Prop} (yes: P) : {P} + {~ P} -> Prop :=
@@ -122,17 +123,24 @@ Inductive is_left {P: Prop} (yes: P) : {P} + {~ P} -> Prop :=
 Inductive ex_is_left {P: Prop} (d : {P} + {~ P}) : Prop :=
 | ex_is_left_intro: forall yes, is_left yes d -> ex_is_left d.
 
-Lemma yes_is_left {P: Prop} (p: P) (d : {P} + {~ P}) : ex_is_left d.
-Proof. destruct d as [yes | no]; [exists yes; constructor | case (no p)]. Qed.
-
-(* Similarly for [~P] *)
 Inductive is_right {P: Prop} (no : ~P) : {P} + {~ P} -> Prop :=
 | right_no : is_right no (right no).
 Inductive ex_is_right {P: Prop} (d : {P} + {~ P}) : Prop :=
 | ex_is_right_intro : forall no, is_right no d -> ex_is_right d
 .
-Lemma no_is_right {P: Prop} (np: ~P) (d : {P} + {~ P}) : ex_is_right d.
-Proof. destruct d as [yes | no]; [case (np yes) | exists no; constructor]. Qed.
+
+Definition dec_dispatch {P: Prop} (d : {P} + {~ P}) : {P} + {~ P} -> Prop :=
+  match d with
+  | left yes => ex_is_left
+  | right no => ex_is_right
+  end.
+
+Lemma inv_dec {P: Prop} (d' d : {P} + {~ P}) : dec_dispatch d d'.
+Proof.
+  destruct d as [p | np].
+  - destruct d' as [yes | no]; [exists yes; constructor | case (no p)].
+  - destruct d' as [yes | no]; [case (np yes) | exists no; constructor].
+Qed.
 
 (** End of library *)
 
@@ -197,16 +205,18 @@ Fixpoint prog_linear_search start (b : before_witness start) : nat :=
     | right no => prog_linear_search (S start) (inv_before_witness start b no)
   end.
 
+Definition inv_decP {n} (d: {P n} + {~P n}) := inv_dec (P_dec n) d.
+
 Lemma pls_yes_simple {start b} (yes : P start) : prog_linear_search start b = start.
 Proof.
-  destruct (yes_is_left yes (P_dec start)) as [y dy].
+  destruct (inv_decP (left yes)) as [y dy].
   destruct b as [p | b]; cbn; case dy; reflexivity.
 Qed.
 
 (* More systematic version *)
 Lemma pls_yes {start b} (yes : P start) : prog_linear_search start b = start.
 Proof.
-  destruct (yes_is_left yes (P_dec start)) as [y dy].
+  destruct (inv_decP (left yes)) as [y dy].
   generalize (before_witness_small_inv b); unfold before_witness_dispatch.
   case dy. intros [p | b']; cbn; case dy; reflexivity.
 Qed.
@@ -214,7 +224,7 @@ Qed.
 Lemma pls_no {start b} (no : ~P start) :
   prog_linear_search start b = prog_linear_search (S start) (inv_before_witness start b no).
 Proof.
-  destruct (no_is_right no (P_dec start)) as [no' dn].
+  destruct (inv_decP (right no)) as [no' dn].
   generalize (before_witness_small_inv b); unfold before_witness_dispatch.
   case dn. intros [bS]. cbn. case dn. reflexivity.
 Qed.
