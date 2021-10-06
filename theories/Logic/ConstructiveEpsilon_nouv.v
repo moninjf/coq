@@ -209,18 +209,19 @@ Definition inv_decP {n} (d: {P n} + {~P n}) := inv_dec (P_dec n) d.
 
 Lemma pls_yes_simple {start b} (yes : P start) : prog_linear_search start b = start.
 Proof.
-  destruct (inv_decP (left yes)) as [y dy].
+  destruct (inv_decP (left yes)) as [y dy]; clear yes.
   destruct b as [p | b]; cbn; case dy; reflexivity.
 Qed.
 
 (* More systematic version *)
 Lemma pls_yes {start b} (yes : P start) : prog_linear_search start b = start.
 Proof.
-  destruct (inv_decP (left yes)) as [y dy].
+  destruct (inv_decP (left yes)) as [y dy]; clear yes.
   generalize (before_witness_small_inv b); unfold before_witness_dispatch.
   case dy. intros [p | b']; cbn; case dy; reflexivity.
 Qed.
 
+(** In the next case we get that [P_dec start] is a [right no'], which is used twice *)
 Lemma pls_no {start b} (no : ~P start) :
   prog_linear_search start b = prog_linear_search (S start) (inv_before_witness start b no).
 Proof.
